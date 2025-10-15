@@ -2,6 +2,10 @@
 from pykrx import stock
 import pandas as pd
 import mplfinance as mpf
+import matplotlib
+
+# GUI 없이 이미지 저장용 백엔드 사용 (PowerShell 등 터미널 환경에서 필수)
+matplotlib.use('Agg')
 
 df = stock.get_market_ohlcv("20230101", "20231231", "005930")
 
@@ -91,7 +95,8 @@ def visualise(df):
       figsize=(16,9),
       title='삼성전자 2023 변동성 돌파 전략\n캔들차트 + 매수시그널 + 누적수익률',
       show_nontrading=False,
-      panel_ratios=(3,1)  # 상단:하단 = 3:1 비율
+      panel_ratios=(3,1),  # 상단:하단 = 3:1 비율
+      savefig=dict(fname='samsung_backtest.png', dpi=300)  # 이미지로 저장
   )
 
 result = volatility_breakout_strategy(df, 0.5)
