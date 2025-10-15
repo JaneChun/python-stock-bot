@@ -50,3 +50,7 @@ Thumbs.db
 # Kiwoom API 관련 (개인정보가 포함될 수 있음)
 *.dat
 *.db
+
+# 로컬
+scripts/test/*
+todo.md
