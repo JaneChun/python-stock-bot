@@ -32,7 +32,13 @@ def get_current_price(kiwoom, code):
             return None
 
         name = data['종목명'].iloc[0] if '종목명' in data.columns else code
-        current_price = safe_int(data['현재가'].iloc[0], use_abs=True) if '현재가' in data.columns else 0
+        current_price = safe_int(
+            data['현재가'].iloc[0], use_abs=True) if '현재가' in data.columns else None
+
+        # 필수 데이터가 None인 경우 None 반환
+        if current_price is None:
+            print(f"[오류] {code} 현재가 데이터 변환 실패")
+            return None
 
         return {
             'code': code,
@@ -71,18 +77,96 @@ def get_stock_info(kiwoom, code):
         if data is None or data.empty:
             return None
 
+        # 필수 데이터 변환
+        current_price = safe_int(
+            data['현재가'].iloc[0], use_abs=True) if '현재가' in data.columns else None
+        volume = safe_int(data['거래량'].iloc[0],
+                          use_abs=True) if '거래량' in data.columns else None
+        open_price = safe_int(
+            data['시가'].iloc[0], use_abs=True) if '시가' in data.columns else None
+        high = safe_int(data['고가'].iloc[0],
+                        use_abs=True) if '고가' in data.columns else None
+        low = safe_int(data['저가'].iloc[0],
+                       use_abs=True) if '저가' in data.columns else None
+
+        # 필수 데이터가 None인 경우 None 반환
+        if current_price is None or volume is None or open_price is None or high is None or low is None:
+            print(f"[오류] {code} 종목 정보 데이터 변환 실패")
+            return None
+
         return {
             'code': code,
             'name': data['종목명'].iloc[0] if '종목명' in data.columns else code,
-            'current_price': safe_int(data['현재가'].iloc[0], use_abs=True) if '현재가' in data.columns else 0,
-            'volume': safe_int(data['거래량'].iloc[0], use_abs=True) if '거래량' in data.columns else 0,
-            'open': safe_int(data['시가'].iloc[0], use_abs=True) if '시가' in data.columns else 0,
-            'high': safe_int(data['고가'].iloc[0], use_abs=True) if '고가' in data.columns else 0,
-            'low': safe_int(data['저가'].iloc[0], use_abs=True) if '저가' in data.columns else 0,
+            'current_price': current_price,
+            'volume': volume,
+            'open': open_price,
+            'high': high,
+            'low': low,
         }
 
     except Exception as e:
         print(f"[오류] {code} 정보 조회 실패: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return None
+
+
+def get_investor_data(kiwoom, code):
+    """
+    외국인/기관 매매 정보 조회
+
+    Args:
+        kiwoom: Kiwoom API 인스턴스
+        code: 종목코드
+
+    Returns:
+        dict: 외국인/기관 순매수 정보
+    """
+    try:
+        # 일자별 매매 정보 조회
+        data = kiwoom.block_request(
+            "opt10059",
+            # 일자=datetime.now().strftime('%Y%m%d'),
+            일자='20251014',
+            종목코드=code,
+            금액수량구분="1",  # 1:금액, 2:수량
+            매매구분="0",     # 0:순매수, 1:매수, 2:매도
+            단위구분="1000",  # 1:단주, 1000:천주
+            output="종목별투자자기관별",
+            next=0
+        )
+
+        # DataFrame 처리
+        if data is None or data.empty:
+            return None
+
+        # 필수 데이터 변환
+        foreigner = safe_int(data['외국인투자자'].iloc[0]
+                             ) if '외국인투자자' in data.columns else None
+        institution = safe_int(
+            data['기관계'].iloc[0]) if '기관계' in data.columns else None
+        price_change = safe_int(
+            data['전일대비'].iloc[0]) if '전일대비' in data.columns else None
+        change_rate = safe_float(
+            data['등락율'].iloc[0]) if '등락율' in data.columns else None
+
+        # 필수 데이터가 None인 경우 None 반환
+        if foreigner is None or institution is None or price_change is None or change_rate is None:
+            print(f"[오류] {code} 투자자 정보 데이터 변환 실패")
+            return None
+
+        # 최근 데이터 사용 (첫 번째 행)
+        return {
+            'code': code,
+            'date': data['일자'].iloc[0] if '일자' in data.columns else '',
+            'foreigner': foreigner,
+            'institution': institution,
+            'price_change': price_change,
+            'change_rate': change_rate,
+        }
+
+    except Exception as e:
+        print(f"[오류] {code} 투자자 정보 조회 실패: {str(e)}")
         import traceback
         traceback.print_exc()
         return None
@@ -121,14 +205,34 @@ def get_daily_data(kiwoom, code, days=20):
         length = min(len(data), days)
 
         for i in range(length):
+            # 필수 데이터 변환
+            date = data['일자'].iloc[i] if '일자' in data.columns else None
+            open_price = safe_int(
+                data['시가'].iloc[i], use_abs=True) if '시가' in data.columns else None
+            high = safe_int(data['고가'].iloc[i],
+                            use_abs=True) if '고가' in data.columns else None
+            low = safe_int(data['저가'].iloc[i],
+                           use_abs=True) if '저가' in data.columns else None
+            close = safe_int(
+                data['현재가'].iloc[i], use_abs=True) if '현재가' in data.columns else None
+            volume = safe_int(
+                data['거래량'].iloc[i], use_abs=True) if '거래량' in data.columns else None
+            trading_value = safe_int(
+                data['거래대금'].iloc[i], use_abs=True) if '거래대금' in data.columns else None
+
+            # None이 있는 경우 해당 데이터 스킵
+            if date is None or open_price is None or high is None or low is None or close is None or volume is None or trading_value is None:
+                print(f"[일봉] {code} {i}번째 데이터 변환 실패로 스킵")
+                continue
+
             daily_data.append({
-                'date': data['일자'].iloc[i] if '일자' in data.columns else '',
-                'open': safe_int(data['시가'].iloc[i], use_abs=True) if '시가' in data.columns else 0,
-                'high': safe_int(data['고가'].iloc[i], use_abs=True) if '고가' in data.columns else 0,
-                'low': safe_int(data['저가'].iloc[i], use_abs=True) if '저가' in data.columns else 0,
-                'close': safe_int(data['현재가'].iloc[i], use_abs=True) if '현재가' in data.columns else 0,
-                'volume': safe_int(data['거래량'].iloc[i], use_abs=True) if '거래량' in data.columns else 0,
-                'trading_value': safe_int(data['거래대금'].iloc[i], use_abs=True) if '거래대금' in data.columns else 0,
+                'date': date,
+                'open': open_price,
+                'high': high,
+                'low': low,
+                'close': close,
+                'volume': volume,
+                'trading_value': trading_value,
             })
 
         return daily_data
@@ -137,50 +241,5 @@ def get_daily_data(kiwoom, code, days=20):
         print(f"[오류] {code} 일봉 데이터 조회 실패: {str(e)}")
         import traceback
         traceback.print_exc()
-        return []
 
-
-def get_investor_data(kiwoom, code):
-    """
-    외국인/기관 매매 정보 조회
-
-    Args:
-        kiwoom: Kiwoom API 인스턴스
-        code: 종목코드
-
-    Returns:
-        dict: 외국인/기관 순매수 정보
-    """
-    try:
-        # 일자별 매매 정보 조회
-        data = kiwoom.block_request(
-            "opt10059",
-            # 일자=datetime.now().strftime('%Y%m%d'),
-            일자='20251014',
-            종목코드=code,
-            금액수량구분="1",  # 1:금액, 2:수량
-            매매구분="0",     # 0:순매수, 1:매수, 2:매도
-            단위구분="1000",  # 1:단주, 1000:천주
-            output="종목별투자자기관별",
-            next=0
-        )
-
-        # DataFrame 처리
-        if data is None or data.empty:
-            return None
-
-        # 최근 데이터 사용 (첫 번째 행)
-        return {
-            'code': code,
-            'date': data['일자'].iloc[0] if '일자' in data.columns else '',
-            'foreigner': safe_int(data['외국인투자자'].iloc[0]) if '외국인투자자' in data.columns else 0,
-            'institution': safe_int(data['기관계'].iloc[0]) if '기관계' in data.columns else 0,
-            'price_change': safe_int(data['전일대비'].iloc[0]) if '전일대비' in data.columns else 0,
-            'change_rate': safe_float(data['등락율'].iloc[0]) if '등락율' in data.columns else 0.0,
-        }
-
-    except Exception as e:
-        print(f"[오류] {code} 투자자 정보 조회 실패: {str(e)}")
-        import traceback
-        traceback.print_exc()
-        return None
+    return []
