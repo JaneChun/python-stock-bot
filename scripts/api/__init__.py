@@ -10,6 +10,7 @@ from .market_data import (
 from .screening import screen_by_volume
 from .filters import (
     filter_by_trading_volume,
+    filter_by_long_candle,
 )
 
 __all__ = [
@@ -19,4 +20,5 @@ __all__ = [
     'get_investor_data',
     'screen_by_volume',
     'filter_by_trading_volume',
+    'filter_by_long_candle',
 ]

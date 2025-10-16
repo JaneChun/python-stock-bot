@@ -52,5 +52,5 @@ Thumbs.db
 *.db
 
 # 로컬
-scripts/test/*
+# scripts/test.py
 todo.md
