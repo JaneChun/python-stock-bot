@@ -37,5 +37,4 @@ python -c "import platform; print(platform.architecture())"
 python -m pip install --upgrade pip
 python -m pip install --upgrade setuptools
 
-conda install pandas matplotlib
-pip install pykrx matplotlib pykiwoom
+pip install -r requirements.txt
