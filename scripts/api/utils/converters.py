@@ -3,11 +3,6 @@
 """
 
 
-class ConversionError(Exception):
-    """데이터 변환 실패 예외"""
-    pass
-
-
 def safe_int(value, use_abs=False):
     """
     정수로 변환 (실패 시 None 반환)
@@ -21,7 +16,8 @@ def safe_int(value, use_abs=False):
     """
     try:
         # 문자열로 변환 후 콤마, +, - 기호 제거
-        cleaned = str(value).replace(',', '').replace('+', '').replace('-', '').strip()
+        cleaned = str(value).replace(',', '').replace(
+            '+', '').replace('-', '').strip()
 
         if not cleaned or cleaned == 'nan':
             return None
