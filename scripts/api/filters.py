@@ -9,17 +9,51 @@
 from datetime import datetime
 from pykrx import stock
 from .market_data import get_daily_data, get_investor_data, get_stock_info
-from .screening import get_program_top50_codes
+from .screening import screen_by_program
 from .utils import safe_int
+from .utils.rate_limiter import apply_rate_limit
 
 
-def filter_by_volume_above_ma5_20_60(kiwoom, code):
+def filter_by_volume_above_ma5_20_60(kiwoom, code_list):
     """
-    거래량 폭증 여부 확인 (5일, 20일, 60일 이동평균선 기준)
+    거래량 폭증 종목 필터링 (5일, 20일, 60일 이동평균선 기준)
 
-    조건:
-    1. 오늘 거래량이 5일, 20일, 60일 이동평균선을 모두 넘어야 함
-    2. 매수세가 강해야 함 (종가 > 시가, 즉 양봉)
+    종목 리스트를 받아 오늘 거래량이 5일, 20일, 60일 이동평균선을 모두 넘는 종목만 필터링합니다.
+
+    Args:
+        kiwoom: Kiwoom API 인스턴스
+        code_list: 필터링할 종목코드 리스트
+
+    Returns:
+        list: 조건을 만족하는 종목코드 리스트
+    """
+
+    filtered_codes = []
+
+    print(f"[거래량 MA5/20/60 필터링] {len(code_list)}개 종목 필터링 중...")
+
+    for code in code_list:
+        try:
+            # API 호출 제한 적용
+            is_passed, message = apply_rate_limit(
+                lambda: _check_volume_above_ma5_20_60(kiwoom, code)
+            )
+
+            if is_passed:
+                filtered_codes.append(code)
+
+        except Exception as e:
+            print(f"  ✗ {code}: 오류 - {str(e)}")
+
+    print(f"[거래량 MA5/20/60 필터링] {len(filtered_codes)}개 종목 통과")
+    return filtered_codes
+
+
+def _check_volume_above_ma5_20_60(kiwoom, code):
+    """
+    단일 종목의 거래량 폭증 여부 확인 (내부 함수)
+
+    오늘 거래량이 5일, 20일, 60일 이동평균선을 모두 넘는지 확인합니다.
 
     Args:
         kiwoom: Kiwoom API 인스턴스
@@ -67,7 +101,7 @@ def filter_by_volume_above_ma5_20_60(kiwoom, code):
 
         # 오늘 거래량이 5일, 20일, 60일 이동평균선을 모두 넘었는지 확인
         if today_volume > ma_5 and today_volume > ma_20 and today_volume > ma_60:
-            return True, f"거래량 폭증 (거래량 {today_volume:,} > MA5 {ma_5:,.0f}({ratio_5:.2f}배), MA20 {ma_20:,.0f}({ratio_20:.2f}배), MA60 {ma_60:,.0f}({ratio_60:.2f}배)), 매수세"
+            return True, f"거래량 폭증 (거래량 {today_volume:,} > MA5 {ma_5:,.0f}({ratio_5:.2f}배), MA20 {ma_20:,.0f}({ratio_20:.2f}배), MA60 {ma_60:,.0f}({ratio_60:.2f}배))"
         else:
             failed = []
             if today_volume <= ma_5:
@@ -82,138 +116,133 @@ def filter_by_volume_above_ma5_20_60(kiwoom, code):
         return False, f"오류: {str(e)}"
 
 
-def filter_by_volume_5x_ma5(kiwoom, code):
+def filter_by_volume_and_change(kiwoom, code_list, ma_period=5, volume_multiplier=3, min_change_ratio=0.0):
     """
-    거래량 폭증 여부 확인 (5일 이동평균 기준)
+    거래량 폭증 종목 필터링 (이동평균 기준 + 상승률 조건)
 
-    조건:
-    1. 오늘 거래량이 과거 5일 평균 거래량의 5배를 초과해야 함
-    2. 매수세가 강해야 함 (종가 > 시가, 즉 양봉)
+    종목 리스트를 받아 다음 조건을 모두 만족하는 종목만 필터링합니다:
+    1. 오늘 거래량이 지정한 기간의 이동평균 대비 지정한 배수를 초과
+    2. 오늘 상승률이 지정한 기준 이상
+
+    Args:
+        kiwoom: Kiwoom API 인스턴스
+        code_list: 필터링할 종목코드 리스트
+        ma_period (int, optional): 이동평균 계산 기간 (기본값: 5일)
+        volume_multiplier (float, optional): 거래량 배수 기준 (기본값: 3배)
+        min_change_ratio (float, optional): 최소 상승률 (기본값: 0.0 = 0%)
+
+    Returns:
+        list: 조건을 만족하는 종목코드 리스트
+    """
+    from .utils.rate_limiter import apply_rate_limit
+
+    filtered_codes = []
+
+    print(
+        f"[거래량+상승률 필터링] MA{ma_period}의 {volume_multiplier}배, 상승률 {min_change_ratio*100:.0f}% 기준으로 {len(code_list)}개 종목 필터링 중...")
+
+    for code in code_list:
+        try:
+            # API 호출 제한 적용
+            is_passed, message = apply_rate_limit(
+                lambda: _check_volume_and_change(
+                    kiwoom, code, ma_period, volume_multiplier, min_change_ratio)
+            )
+
+            if is_passed:
+                filtered_codes.append(code)
+
+        except Exception as e:
+            print(f"  ✗ {code}: 오류 - {str(e)}")
+
+    print(f"[거래량+상승률 필터링] {len(filtered_codes)}개 종목 통과")
+    return filtered_codes
+
+
+def _check_volume_and_change(kiwoom, code, ma_period, volume_multiplier, min_change_ratio):
+    """
+    단일 종목의 거래량 폭증 및 상승률 확인 (내부 함수)
+
+    다음 조건을 순차적으로 확인하여 모두 통과해야 합니다:
+    1. 오늘 상승률이 최소 기준 이상인지 확인
+    2. 오늘 거래량이 이동평균선의 지정 배수를 초과하는지 확인
 
     Args:
         kiwoom: Kiwoom API 인스턴스
         code: 종목코드
+        ma_period: 이동평균 계산 기간
+        volume_multiplier: 거래량 배수 기준
+        min_change_ratio: 최소 상승률 (예: 0.03 = 3%)
 
     Returns:
         tuple: (통과 여부, 상세 정보)
     """
-    MA_PERIOD = 5
-    VOLUME_MULTIPLIER = 5
-
     try:
-        # 일봉 데이터 조회 (5일 + 오늘)
-        daily_data = get_daily_data(kiwoom, code, MA_PERIOD + 1)
+        # 일봉 데이터 조회 (지정 기간 + 오늘)
+        daily_data = get_daily_data(kiwoom, code, ma_period + 1)
 
-        if len(daily_data) < MA_PERIOD + 1:
+        if len(daily_data) < ma_period + 1:
             return False, "데이터 부족"
 
         # 오늘 데이터
         today = daily_data[0]
         today_volume = today['volume']
 
-        # 5일 이동평균 계산 (오늘 제외, 과거 데이터)
-        past_volumes = [d['volume'] for d in daily_data[1:]]
-
-        # 5일 이동평균
-        ma_5_volumes = past_volumes[:MA_PERIOD]
-        ma_5 = sum(ma_5_volumes) / \
-            len(ma_5_volumes) if len(ma_5_volumes) == MA_PERIOD else 0
-
-        if ma_5 == 0:
-            return False, "평균 거래량 계산 실패"
-
-        # 각 이동평균선 대비 비율
-        ratio_5 = today_volume / ma_5
-
-        # 오늘 거래량이 5일 이동평균선의 5배를 넘었는지 확인
-        if today_volume > ma_5 * VOLUME_MULTIPLIER:
-            return True, f"거래량 폭증 (거래량 {today_volume:,} > MA{MA_PERIOD} {ma_5:,.0f}({ratio_5:.2f}배), 매수세"
-        else:
-            failed = []
-            if today_volume <= ma_5:
-                failed.append(f"MA{MA_PERIOD} {ma_5:,.0f}({ratio_5:.2f}배)")
-            return False, f"거래량 부족 (거래량 {today_volume:,}, 미달: {', '.join(failed)})"
-
-    except Exception as e:
-        return False, f"오류: {str(e)}"
-
-
-def filter_by_long_candle(kiwoom, code, min_body_ratio=0.7, min_change_ratio=0.03):
-    """
-    일봉이 장대양봉인지 확인
-
-    Args:
-        kiwoom: Kiwoom API 인스턴스
-        code: 종목코드
-        min_body_ratio: 최소 몸통 비율 (고가-저가 대비 종가-시가 비율, 기본값: 0.7 = 70%)
-        min_change_ratio: 최소 상승률 (기본값: 0.03 = 3%)
-
-    Returns:
-        tuple: (통과 여부, 상세 정보)
-    """
-    try:
-        # 오늘 데이터 조회
-        daily_data = get_daily_data(kiwoom, code, 1)
-
-        if not daily_data:
-            return False, "데이터 없음"
-
-        today = daily_data[0]
+        # 상승률 계산: 현재가 - 시가 / 시가
         open_price = today['open']
         close_price = today['close']
-        high_price = today['high']
-        low_price = today['low']
-
-        # 양봉 확인 (종가 > 시가)
-        if close_price <= open_price:
-            return False, "음봉"
-
-        # 몸통 비율 계산
-        body = close_price - open_price
-        total_range = high_price - low_price
-
-        if total_range == 0:
-            return False, "가격 변동 없음"
-
-        body_ratio = body / total_range
-
-        # 상승률 계산
-        if open_price == 0:
-            return False, "시가 0"
-
         change_ratio = (close_price - open_price) / open_price
 
-        # 장대양봉 판단
-        if body_ratio >= min_body_ratio and change_ratio >= min_change_ratio:
-            return True, f"장대양봉 (몸통비율 {body_ratio*100:.1f}%, 상승률 {change_ratio*100:.1f}%)"
+        # 상승률 기준 체크
+        if change_ratio < min_change_ratio:
+            return False, f"상승률 기준 미달 (상승률 {change_ratio*100:.1f}%)"
+
+        # 이동평균 계산 (오늘 제외, 과거 데이터)
+        past_volumes = [d['volume'] for d in daily_data[1:]]
+
+        # 지정 기간 이동평균
+        ma_volumes = past_volumes[:ma_period]
+        ma = sum(ma_volumes) / \
+            len(ma_volumes) if len(ma_volumes) == ma_period else 0
+
+        if ma == 0:
+            return False, "평균 거래량 계산 실패"
+
+        # 이동평균선 대비 비율
+        ratio = today_volume / ma
+
+        # 오늘 거래량이 이동평균선의 지정 배수를 넘었는지 확인
+        if today_volume > ma * volume_multiplier:
+            return True, f"거래량 {today_volume:,} (MA{ma_period} {ma:,.0f}의 {ratio:.2f}배)"
         else:
-            return False, f"기준 미달 (몸통비율 {body_ratio*100:.1f}%, 상승률 {change_ratio*100:.1f}%)"
+            return False, f"거래량 {today_volume:,} (MA{ma_period} {ma:,.0f}의 {ratio:.2f}배, 기준: {volume_multiplier}배)"
 
     except Exception as e:
         return False, f"오류: {str(e)}"
 
 
-def filter_by_program_top50(kiwoom, code_list):
+def filter_by_program(kiwoom, code_list, count=50):
     """
     프로그램 순매수 상위 종목에 포함되는 종목만 필터링 (코스피 + 코스닥 통합)
 
     Args:
         kiwoom: Kiwoom API 인스턴스
         code_list: 필터링할 종목코드 리스트
+        count: 조회할 상위 종목 수 (기본값: 50)
 
     Returns:
         list: 프로그램 순매수 상위 종목에 포함되는 종목코드 리스트
     """
     try:
         # 프로그램 순매수 상위 종목 조회 (코스피 + 코스닥)
-        top50_codes = get_program_top50_codes(kiwoom)
+        top_codes = screen_by_program(kiwoom, count)
 
-        if not top50_codes:
+        if not top_codes:
             print(f"[오류] 프로그램 순매수 상위 종목 조회 실패")
             return []
 
         # 입력 종목 중 상위 종목에 포함된 종목만 필터링
-        filtered_codes = [code for code in code_list if code in top50_codes]
+        filtered_codes = [code for code in code_list if code in top_codes]
 
         print(
             f"[프로그램 순매수 필터링] 입력: {len(code_list)}개, 상위 종목 포함: {len(filtered_codes)}개")

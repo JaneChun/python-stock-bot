@@ -1,24 +1,34 @@
 """
 종목 스크리닝 API (시가총액, 거래대금 기준, 프로그램 매매)
 """
-from datetime import datetime
-from .utils import safe_int, safe_float
-from .utils.rate_limiter import apply_rate_limit
+
+import os
+import sys
+
+# Add project root to Python path
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from .utils.rate_limiter import apply_rate_limit  # noqa: E402
+from .utils import safe_int  # noqa: E402
+
+from scripts.api.market_data import print_names  # noqa: E402
 
 
-def screen_by_volume_and_market_cap(kiwoom):
+def screen_by_custom_condition(kiwoom, index=0):
     """
-    거래대금 상위 종목 중 시가총액 필터링 스크리닝
+    HTS 조건검색식을 사용한 종목 스크리닝
 
-    HTS 실시간 조건검색에서 만든 조건식을 사용하여:
-    - 거래대금 상위 100개 기업 조회 (ETF, ETN, 관리종목 제외)
-    - 시가총액 3천억 이상인 기업만 필터링
+    HTS 실시간 조건검색에서 만든 조건식을 인덱스로 선택하여 종목을 조회합니다.
+    다양한 조건식을 사용할 수 있으며, index 파라미터로 원하는 조건을 선택할 수 있습니다.
 
     Args:
         kiwoom: Kiwoom API 인스턴스
+        index: 조건식 인덱스 (기본값: 0)
 
     Returns:
-        list: 조건을 만족하는 종목 코드 리스트
+        tuple: (종목 코드 리스트, 조건식 이름)
+            - codes (list): 조건을 만족하는 종목 코드 리스트
+            - condition_name (str): 사용된 조건식 이름
     """
     try:
         # 조건식을 PC로부터 다운로드
@@ -27,14 +37,13 @@ def screen_by_volume_and_market_cap(kiwoom):
         # 전체 조건식 리스트 얻기
         conditions = kiwoom.GetConditionNameList()
 
-        # 0번 조건식에 해당하는 종목 리스트 조회
-        condition_index = conditions[0][0]
-        condition_name = conditions[0][1]
+        # index번 조건식에 해당하는 종목 리스트 조회
+        condition_index, condition_name = conditions[index]
 
-        print(f"[스크리닝] 거래대금·시가총액 조건 종목 조회 중... (조건식: {condition_name})")
+        print(f"[스크리닝] (조건식: {condition_name}) 조건 종목 조회 중...")
 
         codes = kiwoom.SendCondition(
-            '0156',           # 화면번호 (요청 구분용 고유 식별자)
+            '0150',           # 화면번호 (요청 구분용 고유 식별자)
             condition_name,   # 조건식 이름
             condition_index,  # 조건식 고유번호
             0                 # 실시간옵션 (0:조건검색만, 1:조건검색+실시간)
@@ -43,11 +52,11 @@ def screen_by_volume_and_market_cap(kiwoom):
         # 조회 결과 처리
         if not codes:
             print("[스크리닝] 조회된 데이터가 없습니다.")
-            return []
+            return ([], '')
 
         print(f"[스크리닝] {len(codes)}개 종목 조회됨")
 
-        return codes
+        return (codes, condition_name)
 
     except Exception as e:
         print(f"[오류] 조건검색 실패: {str(e)}")
@@ -106,29 +115,31 @@ def screen_by_volume(kiwoom):
         return []
 
 
-def get_program_top50_codes(kiwoom):
+def screen_by_program(kiwoom, count):
     """
     프로그램 매매 순매수 상위 종목 코드 조회 (코스피 + 코스닥 통합)
 
     Args:
         kiwoom: Kiwoom API 인스턴스
+        count: 조회할 종목 수
 
     Returns:
         list: 프로그램 순매수 상위 종목 코드 리스트 (중복 제거)
     """
     try:
         all_data = []
-        target_count = 60  # 조회할 종목 수
+        target_count = count
 
         # 코스피와 코스닥 모두 조회
         for market_code, market_name in [("P00101", "코스피"), ("P10102", "코스닥")]:
             print(
-                f"[스크리닝] 프로그램 순매수 상위 50 종목 조회 중... (시장: {market_name})")
+                f"[스크리닝] 프로그램 순매수 상위 종목 조회 중... (시장: {market_name}, 목표: {target_count}개)")
 
             market_data = []
+            request_count = 0
 
-            # 연속 조회로 45개 종목 수집 (15 * 3회 요청)
-            for request_count in range(3):
+            # target_count를 채울 때까지 반복 조회
+            while len(market_data) < target_count:
                 next_value = 0 if request_count == 0 else 2
 
                 # OPT90003: 프로그램순매수상위50요청
@@ -172,6 +183,8 @@ def get_program_top50_codes(kiwoom):
                         'program_net_buy_amount': program_net_buy_amount
                     })
 
+                request_count += 1
+
             all_data.extend(market_data)
 
         # 중복 제거
@@ -185,14 +198,12 @@ def get_program_top50_codes(kiwoom):
         # 내림차순 정렬
         unique_data.sort(key=lambda x: -x['program_net_buy_amount'])
 
-        # 상위 50개만 선택
-        top_50_data = unique_data[:50]
+        result_codes = [item['code'] for item in unique_data]
 
-        top_50_codes = [item['code'] for item in top_50_data]
+        print(f"[스크리닝] 프로그램 순매수 상위 {len(result_codes)}개 종목 조회됨")
+        # print_names(kiwoom, code_list=result_codes)
 
-        print(f"[스크리닝] 프로그램 순매수 상위 {len(top_50_codes)}개 종목 조회됨")
-
-        return top_50_codes
+        return result_codes
 
     except Exception as e:
         print(f"[오류] 프로그램 매매 순매수 상위 종목 조회 실패: {str(e)}")
