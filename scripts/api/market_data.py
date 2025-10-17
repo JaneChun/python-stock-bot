@@ -249,3 +249,11 @@ def get_daily_data(kiwoom, code, days=20):
         traceback.print_exc()
 
     return []
+
+
+def print_names(kiwoom, code_list):
+    names = []
+    for code in code_list:
+        name = kiwoom.GetMasterCodeName(code)
+        names.append(name)
+    print(names)
