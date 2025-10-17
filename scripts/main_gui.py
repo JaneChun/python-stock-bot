@@ -18,11 +18,10 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from scripts.api.utils import apply_rate_limit  # noqa: E402
 from scripts.api.filters import (
-    filter_by_program_top50,
-    filter_by_volume_5x_ma5,
-    filter_by_long_candle
+    filter_by_program,
+    filter_by_volume_and_change
 )  # noqa: E402
-from scripts.api.screening import screen_by_volume_and_market_cap  # noqa: E402
+from scripts.api.screening import screen_by_custom_condition  # noqa: E402
 from scripts.api.market_data import get_stock_info  # noqa: E402
 
 
@@ -41,6 +40,7 @@ class MainWindow(QMainWindow):
         # Kiwoom API 초기화
         self.kiwoom = None
         self.account = None
+        self.conditions = []  # 조건식 리스트
 
         # 타이머 설정
         self.scan_timer = QTimer()
@@ -92,6 +92,9 @@ class MainWindow(QMainWindow):
                 self.connection_status.setStyleSheet(
                     "color: green; font-weight: bold;")
                 self.log(f"Kiwoom API 연결 성공 (계좌: {self.account})")
+
+                # 조건식 리스트 로드
+                self.load_conditions()
             else:
                 raise Exception("계좌번호를 가져올 수 없습니다.")
 
@@ -106,6 +109,31 @@ class MainWindow(QMainWindow):
         timestamp = datetime.now().strftime('%H:%M:%S')
         self.log_browser.append(f"[{timestamp}] {message}")
         QApplication.processEvents()  # 로그 출력 시마다 GUI 자동 업데이트
+
+    def load_conditions(self):
+        """조건식 리스트 로드"""
+        try:
+            self.log("조건식 리스트 로드 중...")
+
+            # 조건식을 PC로부터 다운로드
+            self.kiwoom.GetConditionLoad()
+
+            # 전체 조건식 리스트 얻기
+            self.conditions = self.kiwoom.GetConditionNameList()
+
+            if self.conditions:
+                self.log(f"조건식 {len(self.conditions)}개 로드 완료")
+
+                # ComboBox 초기화 및 조건식 추가
+                self.condition_combobox.clear()
+                for idx, (condition_index, condition_name) in enumerate(self.conditions):
+                    self.condition_combobox.addItem(f"{idx}: {condition_name}")
+            else:
+                self.condition_combobox.addItem("조건식 없음")
+
+        except Exception as e:
+            self.log(f"조건식 로드 실패: {str(e)}")
+            self.condition_combobox.addItem("조건식 로드 실패")
 
     def start_auto_scan(self):
         """자동 스캔 시작 (매분마다)"""
@@ -166,6 +194,16 @@ class MainWindow(QMainWindow):
             return True
         return False
 
+    def get_filter_parameters(self):
+        """GUI에서 필터링 파라미터 값 읽기"""
+        return {
+            'condition_index': self.condition_combobox.currentIndex(),
+            'program_count': self.program_count.value(),
+            'ma_period': self.ma_period.value(),
+            'volume_multiplier': self.volume_multiplier.value(),
+            'min_change_ratio': self.min_change_ratio.value() / 100.0  # %를 비율로 변환
+        }
+
     def run_scan(self):
         """스캔 실행 (스레드 없이 직접 실행)"""
         if not self.kiwoom:
@@ -179,58 +217,58 @@ class MainWindow(QMainWindow):
             self.log("=" * 60)
             self.log("스캔 시작...")
 
+            # 필터 파라미터 읽기
+            params = self.get_filter_parameters()
+            condition_index = params['condition_index']
+            condition_name = self.conditions[condition_index][1]
+            self.log(f"설정: 조건검색[{condition_name}] 프로그램순매수[상위{params['program_count']}개] "
+                     f"거래량[MA{params['ma_period']}의 {params['volume_multiplier']}배] 상승률[{params['min_change_ratio']*100:.1f}%]")
+
             if self.should_stop():
                 return
 
-            # 1단계: 초기 스크리닝 (거래대금 및 시가총액)
-            self.log("1단계: 거래대금 상위 100 & 시가총액 3천억 이상 종목 스크리닝...")
-            codes = screen_by_volume_and_market_cap(self.kiwoom)
+            # 1단계: 초기 스크리닝 (조건검색)
+            self.log(f"1단계: 조건검색 {params['condition_index']}번 종목 스크리닝...")
+            codes, _ = screen_by_custom_condition(
+                self.kiwoom, params['condition_index'])
             initial_count = len(codes)
             self.log(f"  ✔ {initial_count}개")
             self.update_statistics({
                 'initial_count': initial_count,
                 'program_count': 0,
                 'volume_count': 0,
-                'candle_count': 0
+                'final_count': 0
             })
 
             if self.should_stop():
                 return
 
-            # 2단계: 프로그램 순매수 상위 50 필터
-            self.log("2단계: 프로그램 순매수 상위 50 조건 필터링...")
-            filtered_codes = filter_by_program_top50(self.kiwoom, codes)
+            # 2단계: 프로그램 순매수 상위 N개 필터
+            self.log(f"2단계: 프로그램 순매수 상위 {params['program_count']}개 조건 필터링...")
+            filtered_codes = filter_by_program(
+                self.kiwoom, codes, params['program_count'])
             program_count = len(filtered_codes)
             self.log(f"  ✔ {program_count}개")
             self.update_statistics({
                 'initial_count': initial_count,
                 'program_count': program_count,
                 'volume_count': 0,
-                'candle_count': 0
+                'final_count': 0
             })
 
             if self.should_stop():
                 return
 
-            # 3단계: 거래량 필터
-            self.log("3단계: 거래량 조건(5일 평균 x 3배) 필터링...")
-            filtered_by_volume = []
-
-            for code in filtered_codes:
-                if self.should_stop():
-                    return
-
-                try:
-                    is_above_ma, message = apply_rate_limit(
-                        lambda: filter_by_volume_5x_ma5(
-                            self.kiwoom, code)
-                    )
-
-                    if is_above_ma:
-                        filtered_by_volume.append(code)
-
-                except Exception as e:
-                    self.log(f"  ✗ {code} 분석 실패: {str(e)}")
+            # 3단계: 거래량 + 상승률 필터
+            self.log(f"3단계: 거래량(MA{params['ma_period']} x {params['volume_multiplier']}배) "
+                     f"+ 상승률({params['min_change_ratio']*100:.1f}%) 필터링...")
+            filtered_by_volume = filter_by_volume_and_change(
+                self.kiwoom,
+                filtered_codes,
+                ma_period=params['ma_period'],
+                volume_multiplier=params['volume_multiplier'],
+                min_change_ratio=params['min_change_ratio']
+            )
 
             volume_count = len(filtered_by_volume)
             self.log(f"  ✔ {volume_count}개")
@@ -238,49 +276,17 @@ class MainWindow(QMainWindow):
                 'initial_count': initial_count,
                 'program_count': program_count,
                 'volume_count': volume_count,
-                'candle_count': 0
-            })
-
-            if self.should_stop():
-                return
-
-            # 4단계: 장대양봉 필터
-            self.log("4단계: 장대양봉 필터링...")
-            filtered_by_candle = []
-
-            for code in filtered_by_volume:
-                if self.should_stop():
-                    return
-
-                try:
-                    is_bullish, message = apply_rate_limit(
-                        lambda: filter_by_long_candle(self.kiwoom, code)
-                    )
-
-                    if is_bullish:
-                        filtered_by_candle.append(code)
-                        stock_name = self.kiwoom.GetMasterCodeName(code)
-
-                except Exception as e:
-                    self.log(f"  ✗ {code} 분석 실패: {str(e)}")
-
-            candle_count = len(filtered_by_candle)
-            self.log(f"  ✔ {candle_count}개")
-            self.update_statistics({
-                'initial_count': initial_count,
-                'program_count': program_count,
-                'volume_count': volume_count,
-                'candle_count': candle_count
+                'final_count': volume_count  # 최종 단계
             })
 
             if self.should_stop():
                 return
 
             # 최종 결과 생성 (종목 상세 정보 포함)
-            self.log(f"최종 종목 {candle_count}개 정보 조회중...")
+            self.log(f"최종 종목 {volume_count}개 정보 조회중...")
             result_stocks = []
 
-            for code in filtered_by_candle:
+            for code in filtered_by_volume:
                 if self.should_stop():
                     return
 
@@ -336,10 +342,10 @@ class MainWindow(QMainWindow):
 
     def update_statistics(self, stats):
         """통계 업데이트"""
-        self.initial_count.setText(str(stats['initial_count']))
-        self.program_count.setText(str(stats['program_count']))
-        self.volume_count.setText(str(stats['volume_count']))
-        self.candle_count.setText(str(stats['candle_count']))
+        self.stat_initial_count.setText(str(stats['initial_count']))
+        self.stat_program_count.setText(str(stats['program_count']))
+        self.stat_volume_count.setText(str(stats['volume_count']))
+        self.stat_final_count.setText(str(stats['final_count']))
 
     def update_table(self, stocks):
         """테이블 업데이트"""
