@@ -6,68 +6,308 @@
    <rect>
     <x>0</x>
     <y>0</y>
-    <width>845</width>
-    <height>602</height>
+    <width>806</width>
+    <height>736</height>
    </rect>
   </property>
   <property name="windowTitle">
-   <string>MainWindow</string>
+   <string>주식 자동 스크리닝 시스템</string>
   </property>
   <widget class="QWidget" name="centralwidget">
-   <layout class="QGridLayout" name="gridLayout">
-    <item row="0" column="0">
-     <widget class="QLabel" name="label">
-      <property name="text">
-       <string>관심종목코드</string>
+   <layout class="QVBoxLayout" name="verticalLayout">
+    <item>
+     <widget class="QGroupBox" name="groupBox_control">
+      <property name="title">
+       <string>제어 패널</string>
       </property>
+      <layout class="QHBoxLayout" name="horizontalLayout">
+       <item>
+        <widget class="QLabel" name="label_account">
+         <property name="text">
+          <string>계좌번호:</string>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QLabel" name="account_info">
+         <property name="text">
+          <string>-</string>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QLabel" name="label_status">
+         <property name="text">
+          <string>연결 상태:</string>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QLabel" name="connection_status">
+         <property name="styleSheet">
+          <string>color: red; font-weight: bold;</string>
+         </property>
+         <property name="text">
+          <string>미연결</string>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <spacer name="horizontalSpacer">
+         <property name="orientation">
+          <enum>Qt::Horizontal</enum>
+         </property>
+         <property name="sizeHint" stdset="0">
+          <size>
+           <width>40</width>
+           <height>20</height>
+          </size>
+         </property>
+        </spacer>
+       </item>
+       <item>
+        <widget class="QLabel" name="label_next_scan">
+         <property name="text">
+          <string>다음 스캔:</string>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QLabel" name="next_scan_time">
+         <property name="styleSheet">
+          <string>font-weight: bold;</string>
+         </property>
+         <property name="text">
+          <string>--:--</string>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QPushButton" name="start_button">
+         <property name="text">
+          <string>시작</string>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QPushButton" name="stop_button">
+         <property name="enabled">
+          <bool>false</bool>
+         </property>
+         <property name="text">
+          <string>중지</string>
+         </property>
+        </widget>
+       </item>
+      </layout>
      </widget>
     </item>
-    <item row="0" column="1">
-     <widget class="QLineEdit" name="codes"/>
-    </item>
-    <item row="0" column="2">
-     <widget class="QPushButton" name="start_button">
-      <property name="text">
-       <string>시작</string>
+    <item>
+     <widget class="QGroupBox" name="groupBox_statistics">
+      <property name="title">
+       <string>필터링 통계</string>
       </property>
+      <layout class="QHBoxLayout" name="horizontalLayout_2">
+       <item>
+        <widget class="QLabel" name="label_initial">
+         <property name="text">
+          <string>거래대금:</string>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QLabel" name="initial_count">
+         <property name="styleSheet">
+          <string>font-weight: bold; color: #2196F3;</string>
+         </property>
+         <property name="text">
+          <string>0</string>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QLabel" name="label_arrow1">
+         <property name="text">
+          <string>→</string>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QLabel" name="label_program">
+         <property name="text">
+          <string>프로그램 순매수:</string>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QLabel" name="program_count">
+         <property name="styleSheet">
+          <string>font-weight: bold; color: #2196F3;</string>
+         </property>
+         <property name="text">
+          <string>0</string>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QLabel" name="label_arrow2">
+         <property name="text">
+          <string>→</string>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QLabel" name="label_volume">
+         <property name="text">
+          <string>거래량 조건:</string>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QLabel" name="volume_count">
+         <property name="styleSheet">
+          <string>font-weight: bold; color: #2196F3;</string>
+         </property>
+         <property name="text">
+          <string>0</string>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QLabel" name="label_arrow3">
+         <property name="text">
+          <string>→</string>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QLabel" name="label_candle">
+         <property name="text">
+          <string>장대양봉:</string>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QLabel" name="candle_count">
+         <property name="styleSheet">
+          <string>font-weight: bold; color: #4CAF50;</string>
+         </property>
+         <property name="text">
+          <string>0</string>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <spacer name="horizontalSpacer_2">
+         <property name="orientation">
+          <enum>Qt::Horizontal</enum>
+         </property>
+         <property name="sizeHint" stdset="0">
+          <size>
+           <width>40</width>
+           <height>20</height>
+          </size>
+         </property>
+        </spacer>
+       </item>
+       <item>
+        <widget class="QLabel" name="label_last_update">
+         <property name="text">
+          <string>마지막 업데이트:</string>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QLabel" name="last_update_time">
+         <property name="styleSheet">
+          <string>font-weight: bold;</string>
+         </property>
+         <property name="text">
+          <string>-</string>
+         </property>
+        </widget>
+       </item>
+      </layout>
      </widget>
     </item>
-    <item row="1" column="0">
-     <widget class="QLabel" name="label_2">
-      <property name="text">
-       <string>K value</string>
+    <item>
+     <widget class="QGroupBox" name="groupBox_stocks">
+      <property name="title">
+       <string>필터링된 종목 목록</string>
       </property>
+      <layout class="QVBoxLayout" name="verticalLayout_2">
+       <item>
+        <widget class="QTableWidget" name="stock_table">
+         <property name="editTriggers">
+          <set>QAbstractItemView::NoEditTriggers</set>
+         </property>
+         <property name="alternatingRowColors">
+          <bool>true</bool>
+         </property>
+         <property name="selectionMode">
+          <enum>QAbstractItemView::SingleSelection</enum>
+         </property>
+         <property name="selectionBehavior">
+          <enum>QAbstractItemView::SelectRows</enum>
+         </property>
+         <property name="sortingEnabled">
+          <bool>true</bool>
+         </property>
+         <column>
+          <property name="text">
+           <string>종목코드</string>
+          </property>
+         </column>
+         <column>
+          <property name="text">
+           <string>종목명</string>
+          </property>
+         </column>
+         <column>
+          <property name="text">
+           <string>현재가</string>
+          </property>
+         </column>
+         <column>
+          <property name="text">
+           <string>등락률</string>
+          </property>
+         </column>
+         <column>
+          <property name="text">
+           <string>전일대비</string>
+          </property>
+         </column>
+         <column>
+          <property name="text">
+           <string>거래량</string>
+          </property>
+         </column>
+         <column>
+          <property name="text">
+           <string>선정시간</string>
+          </property>
+         </column>
+        </widget>
+       </item>
+      </layout>
      </widget>
     </item>
-    <item row="1" column="1">
-     <widget class="QLineEdit" name="k_value"/>
-    </item>
-    <item row="1" column="2">
-     <widget class="QPushButton" name="stop_button">
-      <property name="text">
-       <string>중단</string>
+    <item>
+     <widget class="QGroupBox" name="groupBox_log">
+      <property name="title">
+       <string>로그</string>
       </property>
+      <layout class="QVBoxLayout" name="verticalLayout_3">
+       <item>
+        <widget class="QTextBrowser" name="log_browser">
+         <property name="styleSheet">
+          <string>font-family: 'Consolas', 'Courier New', monospace;</string>
+         </property>
+        </widget>
+       </item>
+      </layout>
      </widget>
-    </item>
-    <item row="2" column="0">
-     <widget class="QLabel" name="label_3">
-      <property name="text">
-       <string>현재가</string>
-      </property>
-     </widget>
-    </item>
-    <item row="2" column="3">
-     <widget class="QLabel" name="label_4">
-      <property name="text">
-       <string>매매현황</string>
-      </property>
-     </widget>
-    </item>
-    <item row="3" column="0" colspan="3">
-     <widget class="QTextBrowser" name="current_price_log"/>
-    </item>
-    <item row="3" column="3">
-     <widget class="QTextBrowser" name="buy_sell_log"/>
     </item>
    </layout>
   </widget>
@@ -76,7 +316,7 @@
     <rect>
      <x>0</x>
      <y>0</y>
-     <width>845</width>
+     <width>806</width>
      <height>21</height>
     </rect>
    </property>
