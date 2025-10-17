@@ -80,6 +80,10 @@ def get_stock_info(kiwoom, code):
         # 필수 데이터 변환
         current_price = safe_int(
             data['현재가'].iloc[0], use_abs=True) if '현재가' in data.columns else None
+        change_rate = safe_float(
+            data['등락율'].iloc[0]) if '등락율' in data.columns else None
+        price_change = safe_int(
+            data['전일대비'].iloc[0]) if '전일대비' in data.columns else None
         volume = safe_int(data['거래량'].iloc[0],
                           use_abs=True) if '거래량' in data.columns else None
         open_price = safe_int(
@@ -90,13 +94,15 @@ def get_stock_info(kiwoom, code):
                        use_abs=True) if '저가' in data.columns else None
 
         # 필수 데이터가 None인 경우 None 반환
-        if current_price is None or volume is None or open_price is None or high is None or low is None:
+        if current_price is None or change_rate is None or volume is None or open_price is None or high is None or low is None:
             print(f"[오류] {code} 종목 정보 데이터 변환 실패")
             return None
 
         return {
             'code': code,
             'name': data['종목명'].iloc[0] if '종목명' in data.columns else code,
+            'change_rate': change_rate,
+            'price_change': price_change,
             'current_price': current_price,
             'volume': volume,
             'open': open_price,
