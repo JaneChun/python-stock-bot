@@ -108,53 +108,22 @@
        <string>필터링 설정</string>
       </property>
       <layout class="QGridLayout" name="gridLayout">
-       <item row="0" column="0">
-        <widget class="QLabel" name="label_condition_index">
-         <property name="text">
-          <string>조건검색:</string>
-         </property>
-        </widget>
-       </item>
-       <item row="0" column="1" colspan="4">
-        <widget class="QComboBox" name="condition_combobox">
-         <property name="minimumWidth">
-          <number>300</number>
-         </property>
-        </widget>
-       </item>
-       <item row="1" column="5">
+       <item row="1" column="0">
         <widget class="QLabel" name="label_program_count">
          <property name="text">
           <string>프로그램 순매수 상위:</string>
          </property>
         </widget>
        </item>
-       <item row="1" column="6">
-        <widget class="QSpinBox" name="program_count">
-         <property name="minimum">
-          <number>10</number>
-         </property>
-         <property name="maximum">
-          <number>200</number>
-         </property>
-         <property name="value">
-          <number>50</number>
+       <item row="4" column="0">
+        <widget class="QLabel" name="label_min_change_ratio">
+         <property name="text">
+          <string>최소 상승률:</string>
          </property>
         </widget>
        </item>
-       <item row="1" column="7">
-        <widget class="QLabel" name="label_count_unit">
-         <property name="text">
-          <string>개</string>
-         </property>
-        </widget>
-       </item>
-       <item row="2" column="0">
-        <widget class="QLabel" name="label_ma_period">
-         <property name="text">
-          <string>거래량 MA 기간:</string>
-         </property>
-        </widget>
+       <item row="0" column="1" colspan="4">
+        <widget class="QComboBox" name="condition_combobox"/>
        </item>
        <item row="2" column="1">
         <widget class="QSpinBox" name="ma_period">
@@ -170,43 +139,13 @@
         </widget>
        </item>
        <item row="2" column="2">
-        <widget class="QLabel" name="label_volume_multiplier">
+        <widget class="QLabel" name="label">
          <property name="text">
-          <string>거래량 배수:</string>
+          <string>일</string>
          </property>
         </widget>
        </item>
-       <item row="2" column="3">
-        <widget class="QDoubleSpinBox" name="volume_multiplier">
-         <property name="minimum">
-          <double>1.000000000000000</double>
-         </property>
-         <property name="maximum">
-          <double>10.000000000000000</double>
-         </property>
-         <property name="singleStep">
-          <double>1.000000000000000</double>
-         </property>
-         <property name="value">
-          <double>3.000000000000000</double>
-         </property>
-        </widget>
-       </item>
-       <item row="2" column="4">
-        <widget class="QLabel" name="label_multiplier_unit">
-         <property name="text">
-          <string>배</string>
-         </property>
-        </widget>
-       </item>
-       <item row="2" column="5">
-        <widget class="QLabel" name="label_min_change_ratio">
-         <property name="text">
-          <string>최소 상승률:</string>
-         </property>
-        </widget>
-       </item>
-       <item row="2" column="6">
+       <item row="4" column="1">
         <widget class="QDoubleSpinBox" name="min_change_ratio">
          <property name="minimum">
           <double>0.000000000000000</double>
@@ -222,10 +161,87 @@
          </property>
         </widget>
        </item>
-       <item row="2" column="7">
+       <item row="0" column="0">
+        <widget class="QLabel" name="label_condition_index">
+         <property name="text">
+          <string>조건검색:</string>
+         </property>
+        </widget>
+       </item>
+       <item row="4" column="2">
         <widget class="QLabel" name="label_change_unit">
          <property name="text">
           <string>%</string>
+         </property>
+        </widget>
+       </item>
+       <item row="2" column="3">
+        <widget class="QLabel" name="label_volume_multiplier">
+         <property name="text">
+          <string>거래량 배수:</string>
+         </property>
+        </widget>
+       </item>
+       <item row="0" column="6">
+        <spacer name="horizontalSpacer_3">
+         <property name="orientation">
+          <enum>Qt::Horizontal</enum>
+         </property>
+         <property name="sizeHint" stdset="0">
+          <size>
+           <width>40</width>
+           <height>20</height>
+          </size>
+         </property>
+        </spacer>
+       </item>
+       <item row="2" column="0">
+        <widget class="QLabel" name="label_ma_period">
+         <property name="text">
+          <string>거래량 MA 기간:</string>
+         </property>
+        </widget>
+       </item>
+       <item row="1" column="2">
+        <widget class="QLabel" name="label_count_unit">
+         <property name="text">
+          <string>개</string>
+         </property>
+        </widget>
+       </item>
+       <item row="1" column="1">
+        <widget class="QSpinBox" name="program_count">
+         <property name="minimum">
+          <number>10</number>
+         </property>
+         <property name="maximum">
+          <number>200</number>
+         </property>
+         <property name="value">
+          <number>50</number>
+         </property>
+        </widget>
+       </item>
+       <item row="2" column="4">
+        <widget class="QDoubleSpinBox" name="volume_multiplier">
+         <property name="minimum">
+          <double>1.000000000000000</double>
+         </property>
+         <property name="maximum">
+          <double>10.000000000000000</double>
+         </property>
+         <property name="singleStep">
+          <double>1.000000000000000</double>
+         </property>
+         <property name="value">
+          <double>3.000000000000000</double>
+         </property>
+        </widget>
+       </item>
+       <item row="2" column="5">
+        <widget class="QLabel" name="label_multiplier_unit">
+         <property name="text">
+          <string>배</string>
          </property>
         </widget>
        </item>

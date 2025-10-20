@@ -34,7 +34,8 @@ class MainWindow(QMainWindow):
         super().__init__()
 
         # UI 파일 로드
-        ui_path = os.path.join(os.path.dirname(__file__), 'gui.ui')
+        ui_path = os.path.join(os.path.dirname(
+            __file__), 'stock_screening_system.ui')
         uic.loadUi(ui_path, self)
 
         # Kiwoom API 초기화
