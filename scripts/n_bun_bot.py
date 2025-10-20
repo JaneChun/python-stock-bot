@@ -22,6 +22,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from scripts.api.utils import safe_int  # noqa: E402
 from scripts.api.screening import screen_by_custom_condition  # noqa: E402
+from scripts.api.market_data import print_names  # noqa: E402
 from scripts.api.models import CandleData, AlertInfo  # noqa: E402
 from scripts.api.candle_analysis import should_alert  # noqa: E402
 from scripts.api.utils.formatters import format_price, format_amount, format_ratio  # noqa: E402
@@ -179,7 +180,8 @@ class MainWindow(QMainWindow):
             'min_amount': self.min_amount.value(),
             'lookback_candles': self.lookback_candles.value(),
             'amount_multiplier': self.amount_multiplier.value(),
-            'body_tail_ratio': self.body_tail_ratio.value()
+            'body_tail_ratio': self.body_tail_ratio.value(),
+            'program_count': self.program_count.value()
         }
 
     def start_monitoring(self):
@@ -199,7 +201,8 @@ class MainWindow(QMainWindow):
                      f"최소거래대금[{params['min_amount']}억원] "
                      f"이전분봉[{params['lookback_candles']}개] "
                      f"배수[{params['amount_multiplier']}배] "
-                     f"몸통/윗꼬리[{params['body_tail_ratio']}배]")
+                     f"몸통/윗꼬리[{params['body_tail_ratio']}배] "
+                     f"프로그램 순매수 상위 [{params['program_count']}]위 이내")
 
             # 조건 검색으로 종목 코드 리스트 불러오기
             codes, _ = screen_by_custom_condition(
@@ -376,7 +379,7 @@ class MainWindow(QMainWindow):
         # 파라미터 가져오기
         params = self.get_parameters()
 
-        # 알림 조건 체크 (순수 함수 사용)
+        # 알림 조건 체크
         prev_candles = list(self.minute_data.get(code, []))
         result, data = should_alert(
             candle,
@@ -384,11 +387,14 @@ class MainWindow(QMainWindow):
             params['min_amount'],
             params['lookback_candles'],
             params['amount_multiplier'],
-            params['body_tail_ratio']
+            params['body_tail_ratio'],
+            self.kiwoom,
+            code,
+            params['program_count']
         )
 
         if result and data:
-            current_amount, avg_prev_amount, ratio = data
+            current_amount, avg_prev_amount, ratio, program_rank = data
 
             # 알림 정보 생성
             stock_name = self.kiwoom.GetMasterCodeName(code)
@@ -399,7 +405,8 @@ class MainWindow(QMainWindow):
                 candle=candle,
                 current_amount=current_amount,
                 avg_prev_amount=avg_prev_amount,
-                ratio=ratio
+                ratio=ratio,
+                program_rank=program_rank
             )
 
             # 버퍼에 추가

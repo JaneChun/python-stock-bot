@@ -198,7 +198,7 @@ def screen_by_program(kiwoom, count):
         # 내림차순 정렬
         unique_data.sort(key=lambda x: -x['program_net_buy_amount'])
 
-        result_codes = [item['code'] for item in unique_data]
+        result_codes = [item['code'] for item in unique_data][:count]
 
         print(f"[스크리닝] 프로그램 순매수 상위 {len(result_codes)}개 종목 조회됨")
         # print_names(kiwoom, code_list=result_codes)

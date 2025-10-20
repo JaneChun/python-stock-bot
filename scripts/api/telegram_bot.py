@@ -67,6 +67,7 @@ class TelegramBot:
                 f"💰 *현재가*: {format_price(alert.candle.close)}원\n"
                 f"📊 *거래대금*: {format_amount(alert.current_amount)} (이전평균: {format_amount(alert.avg_prev_amount)})\n"
                 f"⏰ *시간*: {alert.time}\n"
+                f"📈 *프로그램 순매수 순위*: {alert.program_rank}위\n"
             )
 
             self._send_message(message)
@@ -99,6 +100,7 @@ class TelegramBot:
                 f"• 이전 분봉 개수: {params['lookback_candles']}개\n"
                 f"• 급증 배수: {params['amount_multiplier']}배\n"
                 f"• 몸통/윗꼬리 비율: {params['body_tail_ratio']}배\n"
+                f"• 프로그램 순매수 상위 [{params['program_count']}]위 이내"
             )
 
             self._send_message(message)

@@ -4,6 +4,7 @@
 """
 from typing import List, Tuple, Optional, Dict
 from .models import CandleData
+from .screening import screen_by_program
 
 
 def get_trading_amount(candle: CandleData) -> float:
@@ -57,13 +58,16 @@ def should_alert(
     min_amount: float,
     lookback: int,
     amount_multiplier: float,
-    body_tail_ratio: float
-) -> Tuple[bool, Optional[Tuple[float, float, float]]]:
+    body_tail_ratio: float,
+    kiwoom,
+    code: str,
+    program_count: int
+) -> Tuple[bool, Optional[Tuple[float, float, float, int]]]:
     """
-    알림 조건 체크 (순수 함수)
+    알림 조건 체크
 
     Returns:
-        (should_alert, (current_amount, avg_prev_amount, ratio) or None)
+        (should_alert, (current_amount, avg_prev_amount, ratio, program_rank) or None)
     """
     # 조건 1: 양봉 체크
     if not is_bullish_candle(candle):
@@ -91,4 +95,18 @@ def should_alert(
         return False, None
 
     ratio = current_amount / avg_prev_amount
-    return True, (current_amount, avg_prev_amount, ratio)
+
+    # 조건 7: 프로그램 순매수 순위 체크
+    program_rank = -1
+    try:
+        program_top_codes = screen_by_program(kiwoom, program_count)
+        if code in program_top_codes:
+            program_rank = program_top_codes.index(code) + 1
+    except Exception:
+        program_rank = -1
+
+    # 프로그램 순매수 상위에 없으면 알림 안 함
+    if program_rank == -1:
+        return False, None
+
+    return True, (current_amount, avg_prev_amount, ratio, program_rank)

@@ -25,3 +25,4 @@ class AlertInfo:
     current_amount: float
     avg_prev_amount: float
     ratio: float
+    program_rank: int

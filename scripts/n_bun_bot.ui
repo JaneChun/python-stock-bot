@@ -150,29 +150,6 @@
          </property>
         </widget>
        </item>
-       <item row="4" column="1">
-        <widget class="QSpinBox" name="min_amount">
-         <property name="suffix">
-          <string>억원</string>
-         </property>
-         <property name="minimum">
-          <number>1</number>
-         </property>
-         <property name="maximum">
-          <number>1000</number>
-         </property>
-         <property name="value">
-          <number>20</number>
-         </property>
-        </widget>
-       </item>
-       <item row="5" column="0">
-        <widget class="QLabel" name="label_lookback_candles">
-         <property name="text">
-          <string>비교할 이전 분봉 개수:</string>
-         </property>
-        </widget>
-       </item>
        <item row="5" column="1">
         <widget class="QSpinBox" name="lookback_candles">
          <property name="suffix">
@@ -189,10 +166,33 @@
          </property>
         </widget>
        </item>
+       <item row="4" column="1">
+        <widget class="QSpinBox" name="min_amount">
+         <property name="suffix">
+          <string>억원</string>
+         </property>
+         <property name="minimum">
+          <number>1</number>
+         </property>
+         <property name="maximum">
+          <number>1000</number>
+         </property>
+         <property name="value">
+          <number>10</number>
+         </property>
+        </widget>
+       </item>
        <item row="0" column="0">
         <widget class="QLabel" name="label_condition_index">
          <property name="text">
           <string>조건검색:</string>
+         </property>
+        </widget>
+       </item>
+       <item row="5" column="0">
+        <widget class="QLabel" name="label_lookback_candles">
+         <property name="text">
+          <string>비교할 이전 분봉 개수:</string>
          </property>
         </widget>
        </item>
@@ -208,27 +208,6 @@
           </size>
          </property>
         </spacer>
-       </item>
-       <item row="0" column="9">
-        <widget class="QLabel" name="label_monitoring_count">
-         <property name="text">
-          <string>모니터링 종목:</string>
-         </property>
-        </widget>
-       </item>
-       <item row="5" column="2">
-        <widget class="QLabel" name="label_amount_multiplier">
-         <property name="text">
-          <string>거래대금 증가 배수:</string>
-         </property>
-        </widget>
-       </item>
-       <item row="6" column="0">
-        <widget class="QLabel" name="label_body_tail_ratio">
-         <property name="text">
-          <string>몸통/윗꼬리 최소 비율:</string>
-         </property>
-        </widget>
        </item>
        <item row="6" column="1">
         <widget class="QDoubleSpinBox" name="body_tail_ratio">
@@ -246,6 +225,50 @@
          </property>
          <property name="value">
           <double>1.200000000000000</double>
+         </property>
+        </widget>
+       </item>
+       <item row="6" column="0">
+        <widget class="QLabel" name="label_body_tail_ratio">
+         <property name="text">
+          <string>몸통/윗꼬리 최소 비율:</string>
+         </property>
+        </widget>
+       </item>
+       <item row="5" column="2">
+        <widget class="QLabel" name="label_amount_multiplier">
+         <property name="text">
+          <string>거래대금 증가 배수:</string>
+         </property>
+        </widget>
+       </item>
+       <item row="0" column="9">
+        <widget class="QLabel" name="label_monitoring_count">
+         <property name="text">
+          <string>모니터링 종목:</string>
+         </property>
+        </widget>
+       </item>
+       <item row="7" column="0">
+        <widget class="QLabel" name="label_program_count">
+         <property name="text">
+          <string>프로그램 순매수 상위</string>
+         </property>
+        </widget>
+       </item>
+       <item row="7" column="1">
+        <widget class="QSpinBox" name="program_count">
+         <property name="suffix">
+          <string>위 이내</string>
+         </property>
+         <property name="minimum">
+          <number>1</number>
+         </property>
+         <property name="maximum">
+          <number>100</number>
+         </property>
+         <property name="value">
+          <number>30</number>
          </property>
         </widget>
        </item>
