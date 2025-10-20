@@ -108,7 +108,7 @@
     <item>
      <widget class="QGroupBox" name="groupBox_parameters">
       <property name="title">
-       <string>조건 설정</string>
+       <string>알림 조건 설정</string>
       </property>
       <layout class="QGridLayout" name="gridLayout">
        <item row="0" column="1" colspan="3">
@@ -226,7 +226,7 @@
        <item row="6" column="0">
         <widget class="QLabel" name="label_body_tail_ratio">
          <property name="text">
-          <string>실체/윗꼬리 최소 비율:</string>
+          <string>몸통/윗꼬리 최소 비율:</string>
          </property>
         </widget>
        </item>

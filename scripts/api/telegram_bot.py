@@ -1,0 +1,151 @@
+"""
+Telegram Bot 알림 시스템
+거래 알림을 Telegram으로 전송
+"""
+from datetime import datetime
+from typing import Optional, Dict, Callable
+import requests
+from .models import AlertInfo
+from .utils.formatters import format_price, format_amount, format_ratio
+
+
+class TelegramBot:
+    """Telegram Bot 알림 클래스"""
+
+    def __init__(self, token: str, chat_id: str, logger: Optional[Callable[[str], None]] = None):
+        """
+        Args:
+            token: Telegram Bot Token
+            chat_id: Telegram Chat ID
+            logger: 로그 출력 함수 (선택)
+        """
+        self.token = token
+        self.chat_id = chat_id
+        self.logger = logger or print
+        self.is_connected = False
+
+    def connect(self) -> bool:
+        """
+        Telegram Bot 연결 및 검증
+
+        Returns:
+            bool: 연결 성공 여부
+        """
+        try:
+            url = f"https://api.telegram.org/bot{self.token}/getMe"
+            response = requests.get(url, timeout=5)
+
+            if response.status_code == 200:
+                bot_info = response.json()
+                bot_username = bot_info.get(
+                    'result', {}).get('username', 'Unknown')
+                self.logger(f"✅ Telegram Bot 연결 성공: @{bot_username}")
+                self.is_connected = True
+                return True
+            else:
+                raise Exception(f"HTTP {response.status_code}")
+
+        except Exception as e:
+            self.logger(f"❌ Telegram Bot 연결 실패: {str(e)}")
+            self.is_connected = False
+            return False
+
+    def send_alert(self, alert: AlertInfo):
+        """
+        거래대금 급증 알림 전송
+
+        Args:
+            alert: 알림 정보
+        """
+        if not self.is_connected:
+            return
+
+        try:
+            message = (
+                f"🔥 *{alert.name}({alert.code})*\n\n"
+                f"💥 *급증 거래대금*: {format_ratio(alert.ratio)[:-1]}배\n"
+                f"💰 *현재가*: {format_price(alert.candle.close)}원\n"
+                f"📊 *거래대금*: {format_amount(alert.current_amount)} (이전평균: {format_amount(alert.avg_prev_amount)})\n"
+                f"⏰ *시간*: {alert.time}\n"
+            )
+
+            self._send_message(message)
+
+        except Exception as e:
+            self.logger(f"❌ Telegram 알림 전송 오류: {str(e)}")
+
+    def send_start_message(self, condition_name: str, num_stocks: int, params: Dict):
+        """
+        모니터링 시작 메시지 전송
+
+        Args:
+            condition_name: 조건식 이름
+            num_stocks: 모니터링 종목 수
+            params: 알림 조건 파라미터
+        """
+        if not self.is_connected:
+            return
+
+        try:
+            current_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+
+            message = (
+                f"✅ *모니터링 시작*\n\n"
+                f"⏰ *시작 시간:* {current_time}\n"
+                f"📋 *조건식:* {condition_name}\n"
+                f"📊 *모니터링 종목:* {num_stocks}개\n\n"
+                f"*알림 조건:*\n"
+                f"• 최소 거래대금: {params['min_amount']}억원\n"
+                f"• 이전 분봉 개수: {params['lookback_candles']}개\n"
+                f"• 급증 배수: {params['amount_multiplier']}배\n"
+                f"• 몸통/윗꼬리 비율: {params['body_tail_ratio']}배\n"
+            )
+
+            self._send_message(message)
+
+        except Exception as e:
+            self.logger(f"❌ Telegram 시작 메시지 전송 오류: {str(e)}")
+
+    def send_stop_message(self):
+        """
+        모니터링 종료 메시지 전송
+        """
+        if not self.is_connected:
+            return
+
+        try:
+            current_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+
+            message = (
+                f"✅ *모니터링 종료*\n\n"
+                f"*종료 시간:* {current_time}\n"
+            )
+
+            self._send_message(message)
+
+        except Exception as e:
+            self.logger(f"❌ Telegram 종료 메시지 전송 오류: {str(e)}")
+
+    def _send_message(self, message: str):
+        """
+        Telegram API 호출 (내부 메서드)
+
+        Args:
+            message: 전송할 메시지 (Markdown 형식)
+        """
+        try:
+            url = f"https://api.telegram.org/bot{self.token}/sendMessage"
+            data = {
+                'chat_id': self.chat_id,
+                'text': message,
+                'parse_mode': 'Markdown'
+            }
+
+            response = requests.post(url, json=data, timeout=5)
+
+            if response.status_code != 200:
+                error_msg = response.json().get('description', 'Unknown error')
+                self.logger(f"❌ Telegram 메시지 전송 실패: {error_msg}")
+
+        except Exception as e:
+            raise e

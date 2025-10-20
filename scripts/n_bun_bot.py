@@ -10,8 +10,6 @@ import pythoncom
 from datetime import datetime
 from collections import deque
 from typing import Dict, Tuple, Optional, List, Deque
-from dataclasses import dataclass
-import requests
 
 from PyQt5.QtWidgets import QApplication, QMainWindow, QTableWidgetItem, QHeaderView
 from PyQt5.QtCore import Qt, QTimer
@@ -24,182 +22,12 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from scripts.api.utils import safe_int  # noqa: E402
 from scripts.api.screening import screen_by_custom_condition  # noqa: E402
+from scripts.api.models import CandleData, AlertInfo  # noqa: E402
+from scripts.api.candle_analysis import should_alert  # noqa: E402
+from scripts.api.utils.formatters import format_price, format_amount, format_ratio  # noqa: E402
+from scripts.api.telegram_bot import TelegramBot  # noqa: E402
 
 load_dotenv()
-
-# ============================================================================
-# 데이터 구조 (Immutable-like)
-# ============================================================================
-
-
-@dataclass(frozen=True)
-class CandleData:
-    """불변 캔들 데이터"""
-    open: int
-    high: int
-    low: int
-    close: int
-    volume: int
-
-
-@dataclass(frozen=True)
-class AlertInfo:
-    """불변 알림 정보"""
-    time: str
-    code: str
-    name: str
-    candle: CandleData
-    current_amount: float
-    avg_prev_amount: float
-    ratio: float
-
-
-# ============================================================================
-# 순수 함수들 (Pure Functions)
-# ============================================================================
-
-def calculate_amount(candle: CandleData) -> float:
-    """거래대금 계산 (억원 단위)"""
-    avg_price = (candle.open + candle.high + candle.low + candle.close) / 4
-    return candle.volume * avg_price / 100000000
-
-
-def is_bullish_candle(candle: CandleData) -> bool:
-    """양봉 체크"""
-    return candle.close > candle.open
-
-
-def check_body_tail_ratio(candle: CandleData, min_ratio: float) -> bool:
-    """실체가 윗꼬리보다 min_ratio배 이상인지 체크"""
-    body = candle.close - candle.open
-    upper_tail = candle.high - candle.close
-    return body > upper_tail * min_ratio
-
-
-def calculate_prev_avg_amount(prev_candles: List[Tuple[str, Dict]], lookback: int) -> float:
-    """이전 N개 분봉의 평균 거래대금 계산"""
-    if len(prev_candles) < lookback:
-        return 0.0
-
-    amounts = [
-        calculate_amount(CandleData(**data))
-        for _, data in prev_candles[-lookback:]
-    ]
-    return sum(amounts) / len(amounts) if amounts else 0.0
-
-
-def should_alert(
-    candle: CandleData,
-    prev_candles: List[Tuple[str, Dict]],
-    min_amount: float,
-    lookback: int,
-    amount_multiplier: float,
-    body_tail_ratio: float
-) -> Tuple[bool, Optional[Tuple[float, float, float]]]:
-    """
-    알림 조건 체크 (순수 함수)
-
-    Returns:
-        (should_alert, (current_amount, avg_prev_amount, ratio) or None)
-    """
-    # 조건 1: 양봉 체크
-    if not is_bullish_candle(candle):
-        return False, None
-
-    # 조건 2: 실체/윗꼬리 비율 체크
-    if not check_body_tail_ratio(candle, body_tail_ratio):
-        return False, None
-
-    # 조건 3: 거래대금 계산
-    current_amount = calculate_amount(candle)
-
-    # 조건 4: 최소 거래대금 체크
-    if current_amount < min_amount:
-        return False, None
-
-    # 조건 5: 이전 분봉들과 비교
-    if len(prev_candles) < lookback:
-        return False, None
-
-    avg_prev_amount = calculate_prev_avg_amount(prev_candles, lookback)
-
-    # 조건 6: 거래대금 배수 체크
-    if avg_prev_amount <= 0 or current_amount < avg_prev_amount * amount_multiplier:
-        return False, None
-
-    ratio = current_amount / avg_prev_amount
-    return True, (current_amount, avg_prev_amount, ratio)
-
-
-def create_candle_chart(prev_candles: List[CandleData], current_candle: CandleData) -> str:
-    """
-    미니 캔들스틱 차트 생성 (ASCII)
-
-    이전 3개 분봉 + 현재 분봉을 시각적으로 표현
-    각 캔들의 강도(거래대금)도 함께 표현
-    """
-    all_candles = prev_candles + [current_candle]
-
-    if not all_candles:
-        return ""
-
-    # 간단한 캔들 문자 표현 + 거래대금 크기 표현
-    chart_symbols = []
-    amounts = []
-
-    for i, c in enumerate(all_candles):
-        # 캔들 방향
-        if c.close > c.open:
-            # 양봉 - 실체 크기에 따라 다른 심볼
-            body_ratio = (c.close - c.open) / c.open if c.open > 0 else 0
-            if body_ratio > 0.05:  # 5% 이상 상승
-                symbol = "🔥"
-            elif body_ratio > 0.02:  # 2% 이상 상승
-                symbol = "▲"
-            else:
-                symbol = "△"
-        elif c.close < c.open:
-            symbol = "▼"  # 음봉
-        else:
-            symbol = "─"  # 보합
-
-        # 마지막 캔들 강조
-        if i == len(all_candles) - 1:
-            symbol = f"[{symbol}]"
-
-        chart_symbols.append(symbol)
-
-        # 거래대금
-        amount = calculate_amount(c)
-        amounts.append(amount)
-
-    # 거래대금 증가 추세 표시
-    trend = ""
-    if len(amounts) >= 2:
-        recent_trend = amounts[-1] / amounts[-2] if amounts[-2] > 0 else 1
-        if recent_trend >= 3.0:
-            trend = " 📈📈📈"
-        elif recent_trend >= 2.0:
-            trend = " 📈📈"
-        elif recent_trend >= 1.5:
-            trend = " 📈"
-
-    return " ".join(chart_symbols) + trend
-
-
-def format_price(price: int) -> str:
-    """가격 포맷팅"""
-    return f"{price:,}"
-
-
-def format_amount(amount: float) -> str:
-    """거래대금 포맷팅"""
-    return f"{amount:.1f}억"
-
-
-def format_ratio(ratio: float) -> str:
-    """배수 포맷팅"""
-    return f"{ratio:.1f}x"
 
 
 # ============================================================================
@@ -212,7 +40,7 @@ class MainWindow(QMainWindow):
 
         # UI 파일 로드
         ui_path = os.path.join(os.path.dirname(
-            __file__), 'volume_spike_gui.ui')
+            __file__), 'n_bun_bot.ui')
         uic.loadUi(ui_path, self)
 
         # Kiwoom API
@@ -228,9 +56,8 @@ class MainWindow(QMainWindow):
         # 통계
         self.monitoring_codes: List[str] = []
 
-        # Telegram Bot
-        self.telegram_token: Optional[str] = None
-        self.telegram_chat_id: Optional[str] = None
+        # 텔레그램 봇
+        self.telegram_bot: Optional[TelegramBot] = None
 
         # UI 업데이트 최적화를 위한 버퍼
         self.pending_alerts: List[AlertInfo] = []
@@ -245,8 +72,7 @@ class MainWindow(QMainWindow):
         # 현재시간 업데이트 타이머
         self.time_timer = QTimer()
         self.time_timer.timeout.connect(self._update_current_time)
-        self.time_timer.setInterval(1000)  # 1초마다 시간 업데이트
-        # 시작 버튼 클릭 시에만 타이머 시작
+        self.time_timer.setInterval(1000)  # 1초마다 현재시간 업데이트
 
         # 버튼 연결
         self.start_button.clicked.connect(self.start_monitoring)
@@ -324,104 +150,21 @@ class MainWindow(QMainWindow):
             self.condition_combobox.addItem("조건식 로드 실패")
 
     def connect_telegram(self):
-        """Telegram Bot 연결"""
-        try:
-            token = os.getenv("TELEBOT_TOKEN")
-            chat_id = os.getenv("TELEGRAM_CHAT_ID")
+        """텔레그램 봇 연결"""
+        token = os.getenv("TELEBOT_TOKEN")
+        chat_id = os.getenv("TELEGRAM_CHAT_ID")
 
-            if not token:
-                self.log("⚠️  Telegram Bot: TELEBOT_TOKEN이 설정되지 않았습니다.")
-                return
-
-            if not chat_id:
-                self.log("⚠️  Telegram Bot: TELEGRAM_CHAT_ID가 설정되지 않았습니다.")
-                return
-
-            self.telegram_token = token
-            self.telegram_chat_id = chat_id
-
-            # 연결 테스트
-            url = f"https://api.telegram.org/bot{token}/getMe"
-            response = requests.get(url, timeout=5)
-
-            if response.status_code == 200:
-                bot_info = response.json()
-                bot_username = bot_info.get('result', {}).get('username', 'Unknown')
-                self.log(f"✅ Telegram Bot 연결 성공: @{bot_username}")
-            else:
-                raise Exception(f"HTTP {response.status_code}")
-
-        except Exception as e:
-            self.log(f"❌ Telegram Bot 연결 실패: {str(e)}")
-            self.telegram_token = None
-            self.telegram_chat_id = None
-
-    def send_telegram_message(self, alert: AlertInfo):
-        """텔레그램 메시지 전송 (알림용)"""
-        if not self.telegram_token or not self.telegram_chat_id:
+        if not token:
+            self.log("⚠️  Telegram Bot: TELEBOT_TOKEN이 설정되지 않았습니다.")
             return
 
-        try:
-            # 메시지 포맷팅
-            message = (
-                f"🚨 *거래대금 급증 알림*\n\n"
-                f"📈 *종목:* {alert.name}({alert.code})\n"
-                f"⏰ *시간:* {alert.time}\n"
-                f"💰 *현재가:* {format_price(alert.candle.close)}원\n"
-                f"📊 *거래대금:* {format_amount(alert.current_amount)}\n"
-                f"📉 *이전평균:* {format_amount(alert.avg_prev_amount)}\n"
-                f"🔥 *급증배수:* {format_ratio(alert.ratio)}\n"
-            )
-
-            self._send_telegram(message)
-
-        except Exception as e:
-            self.log(f"❌ Telegram 메시지 전송 오류: {str(e)}")
-
-    def send_telegram_start_message(self, condition_name: str, num_stocks: int, params: Dict):
-        """텔레그램 시작 메시지 전송"""
-        if not self.telegram_token or not self.telegram_chat_id:
+        if not chat_id:
+            self.log("⚠️  Telegram Bot: TELEGRAM_CHAT_ID가 설정되지 않았습니다.")
             return
 
-        try:
-            current_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-
-            # 메시지 포맷팅
-            message = (
-                f"✅ *모니터링 시작*\n\n"
-                f"⏰ *시작 시간:* {current_time}\n"
-                f"📋 *조건식:* {condition_name}\n"
-                f"📊 *모니터링 종목:* {num_stocks}개\n\n"
-                f"*탐지 조건:*\n"
-                f"• 최소 거래대금: {params['min_amount']}억원\n"
-                f"• 이전 분봉 개수: {params['lookback_candles']}개\n"
-                f"• 급증 배수: {params['amount_multiplier']}배\n"
-                f"• 실체/윗꼬리 비율: {params['body_tail_ratio']}배\n"
-            )
-
-            self._send_telegram(message)
-
-        except Exception as e:
-            self.log(f"❌ Telegram 시작 메시지 전송 오류: {str(e)}")
-
-    def _send_telegram(self, message: str):
-        """텔레그램 API 호출 (내부 메서드)"""
-        try:
-            url = f"https://api.telegram.org/bot{self.telegram_token}/sendMessage"
-            data = {
-                'chat_id': self.telegram_chat_id,
-                'text': message,
-                'parse_mode': 'Markdown'
-            }
-
-            response = requests.post(url, json=data, timeout=5)
-
-            if response.status_code != 200:
-                error_msg = response.json().get('description', 'Unknown error')
-                self.log(f"❌ Telegram 메시지 전송 실패: {error_msg}")
-
-        except Exception as e:
-            raise e
+        # TelegramBot 인스턴스 생성 및 연결
+        self.telegram_bot = TelegramBot(token, chat_id, logger=self.log)
+        self.telegram_bot.connect()
 
     def log(self, message: str):
         """로그 출력"""
@@ -456,7 +199,7 @@ class MainWindow(QMainWindow):
                      f"최소거래대금[{params['min_amount']}억원] "
                      f"이전분봉[{params['lookback_candles']}개] "
                      f"배수[{params['amount_multiplier']}배] "
-                     f"실체/윗꼬리[{params['body_tail_ratio']}배]")
+                     f"몸통/윗꼬리[{params['body_tail_ratio']}배]")
 
             # 조건 검색으로 종목 코드 리스트 불러오기
             codes, _ = screen_by_custom_condition(
@@ -464,7 +207,7 @@ class MainWindow(QMainWindow):
             self.monitoring_codes = codes
             self.log(f"모니터링 대상 종목: {len(codes)}개")
 
-            # 데이터 구조 초기화
+            # 실시간 데이터 저장소 초기화
             self.minute_data = {code: deque(
                 maxlen=params['lookback_candles']) for code in codes}
             self.ongoing_candles = {}
@@ -500,7 +243,9 @@ class MainWindow(QMainWindow):
             self.log("=" * 60)
 
             # 텔레그램 시작 메시지 전송
-            self.send_telegram_start_message(condition_name, len(codes), params)
+            if self.telegram_bot:
+                self.telegram_bot.send_start_message(
+                    condition_name, len(codes), params)
 
             # 메시지 처리 타이머 시작
             self.message_timer.start()
@@ -528,6 +273,8 @@ class MainWindow(QMainWindow):
             self.start_button.setEnabled(True)
             self.stop_button.setEnabled(False)
             self.log("모니터링 중지됨")
+
+            self.telegram_bot.send_stop_message()
 
         except Exception as e:
             self.log(f"ERROR: 모니터링 중지 실패: {str(e)}")
@@ -667,7 +414,8 @@ class MainWindow(QMainWindow):
                      f"{format_ratio(ratio)})")
 
             # 텔레그램 메시지 전송
-            self.send_telegram_message(alert)
+            if self.telegram_bot:
+                self.telegram_bot.send_alert(alert)
 
     def _flush_pending_alerts(self):
         """보류 중인 알림을 UI에 반영 (throttling)"""
