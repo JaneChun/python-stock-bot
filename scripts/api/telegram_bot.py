@@ -75,14 +75,12 @@ class TelegramBot:
         except Exception as e:
             self.logger(f"❌ Telegram 알림 전송 오류: {str(e)}")
 
-    def send_start_message(self, condition_name: str, num_stocks: int, params: Dict):
+    def send_start_message(self, message_body: str):
         """
         모니터링 시작 메시지 전송
 
         Args:
-            condition_name: 조건식 이름
-            num_stocks: 모니터링 종목 수
-            params: 알림 조건 파라미터
+            message_body: 시작 시간 외의 메시지 본문
         """
         if not self.is_connected:
             return
@@ -93,14 +91,7 @@ class TelegramBot:
             message = (
                 f"✅ *모니터링 시작*\n\n"
                 f"⏰ *시작 시간:* {current_time}\n"
-                f"📋 *조건식:* {condition_name}\n"
-                f"📊 *모니터링 종목:* {num_stocks}개\n\n"
-                f"*알림 조건:*\n"
-                f"• 최소 거래대금: {params['min_amount']}억원\n"
-                f"• 이전 분봉 개수: {params['lookback_candles']}개\n"
-                f"• 급증 배수: {params['amount_multiplier']}배\n"
-                f"• 몸통/윗꼬리 비율: {params['body_tail_ratio']}배\n"
-                f"• 프로그램 순매수 상위 [{params['program_count']}]위 이내"
+                f"{message_body}"
             )
 
             self._send_message(message)
