@@ -65,6 +65,91 @@ def screen_by_custom_condition(kiwoom, index=0):
         return []
 
 
+def start_realtime_condition(kiwoom, index=0):
+    """
+    HTS 실시간 조건검색 시작
+
+    조건식에 만족하는 종목을 실시간으로 수신합니다.
+    종목이 조건에 편입되면 OnReceiveRealCondition 이벤트가 발생합니다.
+
+    Args:
+        kiwoom: Kiwoom API 인스턴스
+        index: 조건식 인덱스 (기본값: 0)
+
+    Returns:
+        tuple: (초기 종목 코드 리스트, 조건식 이름, 조건식 고유번호)
+            - codes (list): 초기 조건을 만족하는 종목 코드 리스트
+            - condition_name (str): 사용된 조건식 이름
+            - condition_index (int): 조건식 고유번호 (이벤트 핸들러에서 사용)
+    """
+    try:
+        # 조건식을 PC로부터 다운로드
+        kiwoom.GetConditionLoad()
+
+        # 전체 조건식 리스트 얻기
+        conditions = kiwoom.GetConditionNameList()
+
+        # index번 조건식에 해당하는 종목 리스트 조회
+        condition_index, condition_name = conditions[index]
+
+        print(f"[스크리닝] (조건식: {condition_name}) 실시간 조건검색 시작...")
+
+        codes = kiwoom.SendCondition(
+            '0150',           # 화면번호 (요청 구분용 고유 식별자)
+            condition_name,   # 조건식 이름
+            condition_index,  # 조건식 고유번호
+            1                 # 실시간옵션 (1:조건검색+실시간)
+        )
+
+        # 조회 결과 처리
+        if not codes:
+            print("[스크리닝] 초기 조회된 데이터가 없습니다.")
+            return ([], condition_name, condition_index)
+
+        print(f"[스크리닝] 초기 {len(codes)}개 종목 조회됨 (실시간 모니터링 활성화)")
+
+        return (codes, condition_name, condition_index)
+
+    except Exception as e:
+        print(f"[오류] 실시간 조건검색 실패: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return ([], '', -1)
+
+
+def stop_realtime_condition(kiwoom, condition_name, condition_index):
+    """
+    HTS 실시간 조건검색 중지
+
+    실시간으로 수신 중인 조건검색을 중지합니다.
+
+    Args:
+        kiwoom: Kiwoom API 인스턴스
+        condition_name: 조건식 이름
+        condition_index: 조건식 고유번호
+
+    Returns:
+        bool: 성공 여부
+    """
+    try:
+        print(f"[스크리닝] (조건식: {condition_name}) 실시간 조건검색 중지...")
+
+        kiwoom.SendConditionStop(
+            '0150',           # 화면번호 (start_realtime_condition과 동일해야 함)
+            condition_name,   # 조건식 이름
+            condition_index   # 조건식 고유번호
+        )
+
+        print(f"[스크리닝] 실시간 조건검색 중지 완료")
+        return True
+
+    except Exception as e:
+        print(f"[오류] 실시간 조건검색 중지 실패: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return False
+
+
 def screen_by_volume(kiwoom):
     """
     거래대금 상위 종목 스크리닝
