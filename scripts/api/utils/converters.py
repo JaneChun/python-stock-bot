@@ -15,9 +15,12 @@ def safe_int(value, use_abs=False):
         int | None: 변환된 정수값, 실패 시 None
     """
     try:
-        # 문자열로 변환 후 콤마, +, - 기호 제거
-        cleaned = str(value).replace(',', '').replace(
-            '+', '').replace('-', '').strip()
+        # 문자열로 변환 후 콤마, + 기호 제거
+        cleaned = str(value).replace(',', '').replace('+', '').strip()
+
+        # use_abs=True일 때만 - 기호 제거
+        if use_abs:
+            cleaned = cleaned.replace('-', '')
 
         if not cleaned or cleaned == 'nan':
             return None
