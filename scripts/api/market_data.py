@@ -132,8 +132,7 @@ def get_investor_data(kiwoom, code):
         # 일자별 매매 정보 조회
         data = kiwoom.block_request(
             "opt10059",
-            # 일자=datetime.now().strftime('%Y%m%d'),
-            일자='20251014',
+            일자=datetime.now().strftime('%Y%m%d'),
             종목코드=code,
             금액수량구분="1",  # 1:금액, 2:수량
             매매구분="0",     # 0:순매수, 1:매수, 2:매도
@@ -176,6 +175,76 @@ def get_investor_data(kiwoom, code):
         import traceback
         traceback.print_exc()
         return None
+
+
+def get_minute_data(kiwoom, code, tick=1, count=20):
+    """
+    분봉 데이터 조회
+
+    Args:
+        kiwoom: Kiwoom API 인스턴스
+        code: 종목코드
+        minutes: 조회 분수
+
+    Returns:
+        list: 분봉 데이터 리스트
+    """
+    try:
+        data = kiwoom.block_request(
+            "opt10080",
+            종목코드=code,
+            틱범위=tick,  # 1:1분, 3:3분, 5:5분, 10:10분, 15:15분, 30:30분, 45:45분, 60:60분
+            수정주가구분="1",
+            output="주식분봉차트조회",
+            next=0
+        )
+
+        # DataFrame 처리
+        if data is None or data.empty:
+            return []
+
+        if '현재가' not in data.columns:
+            return []
+
+        minute_data = []
+        length = min(len(data), count)
+
+        for i in range(length):
+            # 필수 데이터 변환
+            time = data['체결시간'].iloc[i] if '체결시간' in data.columns else None
+            open_price = safe_int(
+                data['시가'].iloc[i], use_abs=True) if '시가' in data.columns else None
+            high = safe_int(data['고가'].iloc[i],
+                            use_abs=True) if '고가' in data.columns else None
+            low = safe_int(data['저가'].iloc[i],
+                           use_abs=True) if '저가' in data.columns else None
+            close = safe_int(
+                data['현재가'].iloc[i], use_abs=True) if '현재가' in data.columns else None
+            volume = safe_int(
+                data['거래량'].iloc[i], use_abs=True) if '거래량' in data.columns else None
+
+            # None이 있는 경우 해당 데이터 스킵
+            if time is None or open_price is None or high is None or low is None or close is None or volume is None:
+                print(f"[분봉] {code} {i}번째 데이터 변환 실패로 스킵")
+                continue
+
+            minute_data.append({
+                'time': time,
+                'open': open_price,
+                'high': high,
+                'low': low,
+                'close': close,
+                'volume': volume,
+            })
+
+        return minute_data
+
+    except Exception as e:
+        print(f"[오류] {code} {tick}분봉 데이터 조회 실패: {str(e)}")
+        import traceback
+        traceback.print_exc()
+
+    return []
 
 
 def get_daily_data(kiwoom, code, days=20):

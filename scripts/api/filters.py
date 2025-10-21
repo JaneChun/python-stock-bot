@@ -8,7 +8,7 @@
 """
 from datetime import datetime
 from pykrx import stock
-from .market_data import get_daily_data, get_investor_data, get_stock_info
+from .market_data import get_daily_data, get_investor_data, get_stock_info, get_minute_data
 from .screening import screen_by_program
 from .utils import safe_int
 from .utils.rate_limiter import apply_rate_limit
@@ -254,6 +254,81 @@ def filter_by_program(kiwoom, code_list, count=50):
         import traceback
         traceback.print_exc()
         return []
+
+
+def get_program_rank(kiwoom, code: str, program_count: int) -> int:
+    """
+    프로그램 순매수 순위 조회
+
+    Args:
+        kiwoom: Kiwoom API 인스턴스
+        code: 종목코드
+        program_count: 상위 몇 개까지 조회할지
+
+    Returns:
+        int: 순위 (1부터 시작), 순위권 밖이거나 조회 실패시 -1
+    """
+    try:
+        program_top_codes = screen_by_program(kiwoom, program_count)
+        if code in program_top_codes:
+            return program_top_codes.index(code) + 1
+    except Exception:
+        pass
+    return -1
+
+
+def check_ma_alignment(kiwoom, code: str, tick: int = 3, periods: list = [5, 10, 20, 60]) -> bool:
+    """
+    이동평균선 정배열 체크
+
+    Args:
+        kiwoom: Kiwoom API 인스턴스
+        code: 종목코드
+        tick: 분봉 틱 (기본값: 3분봉)
+        periods: 이동평균 기간 리스트 (기본값: [5, 10, 20, 60])
+                예: [10, 20] → MA10 >= MA20
+                    [10, 20, 40] → MA10 >= MA20 >= MA40
+                    [5, 10, 20, 60] → MA5 >= MA10 >= MA20 >= MA60
+
+    Returns:
+        bool: 정배열이면 True, 아니면 False
+    """
+    # 입력 검증
+    if not periods or len(periods) < 2:
+        print(f"[MA정배열 체크] {code}: 입력 검증 실패 (periods={periods})")
+        return False
+
+    # 필요한 최대 캔들 개수
+    max_period = max(periods)
+
+    # 캔들 데이터 조회
+    minute_data = get_minute_data(kiwoom, code, tick=tick, count=max_period)
+
+    # 데이터가 충분하지 않으면 False
+    if len(minute_data) < max_period:
+        print(
+            f"[MA정배열 체크] {code}: 데이터 부족 (필요: {max_period}개, 실제: {len(minute_data)}개)")
+        return False
+
+    # 종가 추출 (최신 데이터가 앞에 있으므로)
+    closes = [candle['close'] for candle in minute_data]
+
+    # 각 기간별 이동평균 계산
+    moving_averages = []
+    for period in periods:
+        ma = sum(closes[:period]) / period
+        moving_averages.append(ma)
+
+    # 정배열 체크: MA[0] >= MA[1] >= ... >= MA[n]
+    for i in range(len(moving_averages) - 1):
+        if moving_averages[i] < moving_averages[i + 1]:
+            print(
+                f"[MA정배열 체크] {code}: 정배열 실패 (MA{periods[i]}={moving_averages[i]:.2f} < MA{periods[i+1]}={moving_averages[i+1]:.2f})")
+            return False
+
+    print(
+        f"[MA정배열 체크] {code}: 정배열 통과 {dict(zip([f'MA{p}' for p in periods], [f'{ma:.2f}' for ma in moving_averages]))}")
+    return True
 
 
 # def filter_by_breakout(kiwoom, code, lookback_days=5, near_high_ratio=0.98):
