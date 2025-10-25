@@ -1,10 +1,8 @@
 """
 캔들 분석 로직
-함수형 프로그래밍 원칙을 적용한 순수 함수들
 """
-from typing import List, Tuple, Optional, Dict
+from typing import List, Tuple, Dict
 from .models import CandleData
-from .screening import screen_by_program
 
 
 def get_trading_amount(candle: CandleData) -> float:
@@ -42,7 +40,8 @@ def check_body_tail_ratio(candle: CandleData, min_ratio: float) -> bool:
 
 def calculate_prev_avg_amount(prev_candles: List[Tuple[str, Dict]], lookback: int) -> float:
     """이전 N개 분봉의 평균 거래대금 계산"""
-    if len(prev_candles) < lookback:
+    # 부분 데이터를 건너뛰기 위해 lookback+1개 이상 필요
+    if len(prev_candles) < lookback + 1:
         return 0.0
 
     amounts = [
@@ -50,63 +49,3 @@ def calculate_prev_avg_amount(prev_candles: List[Tuple[str, Dict]], lookback: in
         for _, data in prev_candles[-lookback:]
     ]
     return sum(amounts) / len(amounts) if amounts else 0.0
-
-
-def should_alert(
-    candle: CandleData,
-    prev_candles: List[Tuple[str, Dict]],
-    min_amount: float,
-    lookback: int,
-    amount_multiplier: float,
-    body_tail_ratio: float,
-    kiwoom,
-    code: str,
-    program_count: int
-) -> Tuple[bool, Optional[Tuple[float, float, float, int]]]:
-    """
-    알림 조건 체크
-
-    Returns:
-        (should_alert, (current_amount, avg_prev_amount, ratio, program_rank) or None)
-    """
-    # 조건 1: 양봉 체크
-    if not is_bullish_candle(candle):
-        return False, None
-
-    # 조건 2: 몸통/윗꼬리 비율 체크
-    if not check_body_tail_ratio(candle, body_tail_ratio):
-        return False, None
-
-    # 조건 3: 거래대금 계산 (억원 단위)
-    current_amount = get_trading_amount(candle)
-
-    # 조건 4: 최소 거래대금 체크
-    if current_amount < min_amount:
-        return False, None
-
-    # 조건 5: 이전 분봉들과 비교
-    if len(prev_candles) < lookback:
-        return False, None
-
-    avg_prev_amount = calculate_prev_avg_amount(prev_candles, lookback)
-
-    # 조건 6: 거래대금 배수 체크
-    if avg_prev_amount <= 0 or current_amount < avg_prev_amount * amount_multiplier:
-        return False, None
-
-    ratio = current_amount / avg_prev_amount
-
-    # 조건 7: 프로그램 순매수 순위 체크
-    program_rank = -1
-    try:
-        program_top_codes = screen_by_program(kiwoom, program_count)
-        if code in program_top_codes:
-            program_rank = program_top_codes.index(code) + 1
-    except Exception:
-        program_rank = -1
-
-    # 프로그램 순매수 상위에 없으면 알림 안 함
-    if program_rank == -1:
-        return False, None
-
-    return True, (current_amount, avg_prev_amount, ratio, program_rank)

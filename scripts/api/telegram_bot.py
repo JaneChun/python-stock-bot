@@ -5,8 +5,6 @@ Telegram Bot 알림 시스템
 from datetime import datetime
 from typing import Optional, Dict, Callable
 import requests
-from .models import AlertInfo
-from .utils.formatters import format_price, format_amount, format_ratio
 
 
 class TelegramBot:
@@ -50,26 +48,17 @@ class TelegramBot:
             self.is_connected = False
             return False
 
-    def send_alert(self, alert: AlertInfo):
+    def send_alert(self, message: str):
         """
-        거래대금 급증 알림 전송
+        거래 알림 전송
 
         Args:
-            alert: 알림 정보
+            message: 알림 메시지 (Markdown 형식)
         """
         if not self.is_connected:
             return
 
         try:
-            message = (
-                f"🔥 *{alert.name}({alert.code})*\n\n"
-                f"💥 *급증 거래대금*: {format_ratio(alert.ratio)[:-1]}배\n"
-                f"💰 *현재가*: {format_price(alert.candle.close)}원\n"
-                f"📊 *거래대금*: {format_amount(alert.current_amount)} (이전평균: {format_amount(alert.avg_prev_amount)})\n"
-                f"⏰ *시간*: {alert.time}\n"
-                f"📈 *프로그램 순매수 순위*: {alert.program_rank}위\n"
-            )
-
             self._send_message(message)
 
         except Exception as e:

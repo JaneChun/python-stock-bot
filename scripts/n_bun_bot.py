@@ -1,19 +1,18 @@
 """
-실시간 거래대금 급증 탐지 GUI 시스템
-함수형 프로그래밍 원칙을 적용하여 고성능 실시간 처리 구현
+실시간 거래대금 급증 탐지 시스템
 """
 
 import os
 import sys
 import time
+import queue
 import pythoncom
+import traceback
+import threading
 from datetime import datetime
 from collections import deque
 from typing import Dict, Tuple, Optional, List, Deque
 
-from PyQt5.QtWidgets import QApplication, QMainWindow, QTableWidgetItem, QHeaderView
-from PyQt5.QtCore import Qt, QTimer
-from PyQt5 import uic
 from dotenv import load_dotenv
 from pykiwoom.kiwoom import Kiwoom
 
@@ -21,10 +20,15 @@ from pykiwoom.kiwoom import Kiwoom
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from scripts.api.utils import safe_int  # noqa: E402
-from scripts.api.screening import screen_by_custom_condition  # noqa: E402
-from scripts.api.market_data import print_names  # noqa: E402
+from scripts.api.screening import screen_by_custom_condition, screen_by_program  # noqa: E402
 from scripts.api.models import CandleData, AlertInfo  # noqa: E402
-from scripts.api.candle_analysis import should_alert  # noqa: E402
+from scripts.api.candle_analysis import (  # noqa: E402
+    get_trading_amount,
+    is_bullish_candle,
+    check_body_tail_ratio,
+    calculate_prev_avg_amount
+)
+from scripts.api.filters import check_ma_alignment  # noqa: E402
 from scripts.api.utils.formatters import format_price, format_amount, format_ratio  # noqa: E402
 from scripts.api.telegram_bot import TelegramBot  # noqa: E402
 
@@ -32,194 +36,173 @@ load_dotenv()
 
 
 # ============================================================================
-# 메인 GUI 클래스
+# 설정값
 # ============================================================================
+class Config:
+    # 조건검색 설정
+    CONDITION_INDEX = 1  # 사용할 조건검색식 인덱스
 
-class MainWindow(QMainWindow):
-    def __init__(self):
-        super().__init__()
+    # 필터링 조건
+    MIN_AMOUNT = 10.0  # 최소 거래대금 (단위: 억원)
+    LOOKBACK_CANDLES = 3  # 비교할 이전 분봉 개수
+    AMOUNT_MULTIPLIER = 3.0  # 거래대금 증가 배수
+    BODY_TAIL_RATIO = 1.2  # 몸통/윗꼬리 최소 비율
+    PROGRAM_COUNT = 30  # 프로그램 순매수 상위 N개
+    MA_TICK = 3  # 이동평균선 기준 분봉
+    MA_PERIODS = [20, 40, 60]  # 이동평균선 기간 (짧은 순서)
 
-        # UI 파일 로드
-        ui_path = os.path.join(os.path.dirname(
-            __file__), 'n_bun_bot.ui')
-        uic.loadUi(ui_path, self)
+    # 필터 활성화 여부
+    ENABLE_MIN_AMOUNT = True
+    ENABLE_LOOKBACK = True
+    ENABLE_BODY_TAIL = True
+    ENABLE_PROGRAM = True
+    ENABLE_MA_ALIGNMENT = True
+    ENABLE_TELEGRAM = True
 
-        # Kiwoom API
+    # 시스템 설정
+    PROGRAM_REFRESH_INTERVAL = 30  # 프로그램 순매수 갱신 주기 (초)
+    THROTTLE_SECONDS = 10  # 동일 종목 재체크 방지 시간 (초)
+
+
+# ============================================================================
+# 알림 조건 체크 함수 (TR 조회 없음)
+# ============================================================================
+def should_alert(
+    candle: CandleData,
+    prev_candles: List[Tuple[str, Dict]],
+    code: str,
+    program_top_codes: List[str],
+    config: Config
+) -> Tuple[bool, Optional[Tuple[float, float, float, int]]]:
+    """
+    1단계 필터링: TR 조회 없이 빠른 조건 체크
+    """
+    # 1. 양봉 체크
+    if not is_bullish_candle(candle):
+        return False, None
+
+    # 2. 몸통/윗꼬리 비율 체크
+    if config.ENABLE_BODY_TAIL:
+        if not check_body_tail_ratio(candle, config.BODY_TAIL_RATIO):
+            return False, None
+
+    current_amount = get_trading_amount(candle)
+
+    # 3. 최소 거래대금 체크
+    if config.ENABLE_MIN_AMOUNT:
+        if current_amount < config.MIN_AMOUNT:
+            return False, None
+
+    # 4. 거래대금 급증 체크
+    avg_prev_amount = 0
+    ratio = 0
+    if config.ENABLE_LOOKBACK:
+        if len(prev_candles) < config.LOOKBACK_CANDLES:
+            return False, None
+        avg_prev_amount = calculate_prev_avg_amount(
+            prev_candles, config.LOOKBACK_CANDLES)
+        if avg_prev_amount <= 0:
+            return False, None
+        ratio = current_amount / avg_prev_amount
+        if ratio < config.AMOUNT_MULTIPLIER:
+            print(f"[DEBUG] {code}: ✔️✔️✔️")
+            return False, None
+
+    # 5. 프로그램 순매수 체크
+    program_rank = 0
+    if config.ENABLE_PROGRAM:
+        if code not in program_top_codes:
+            print(f"[DEBUG] {code}: ✔️✔️✔️✔️")
+            return False, None
+        program_rank = program_top_codes.index(code) + 1
+        print(f"[DEBUG] {code}: ✔️✔️✔️✔️✔️")
+
+    return True, (current_amount, avg_prev_amount, ratio, program_rank)
+
+
+# ============================================================================
+# 메인 로직 클래스
+# ============================================================================
+class NBunBot:
+    def __init__(self, config: Config):
+        self.config = config
         self.kiwoom: Optional[Kiwoom] = None
-        self.account: Optional[str] = None
+        self.telegram_bot: Optional[TelegramBot] = None
         self.conditions: List[Tuple[int, str]] = []
 
         # 실시간 데이터 저장소
         self.minute_data: Dict[str, Deque[Tuple[str, Dict]]] = {}
         self.ongoing_candles: Dict[str, Dict[str, Dict]] = {}
         self.alerted: Dict[str, str] = {}
+        self.last_check_time: Dict[str, float] = {}
 
-        # 통계
+        # 캐시 및 상태
         self.monitoring_codes: List[str] = []
-
-        # 텔레그램 봇
-        self.telegram_bot: Optional[TelegramBot] = None
-
-        # UI 업데이트 최적화를 위한 버퍼
-        self.pending_alerts: List[AlertInfo] = []
-        self.last_ui_update = time.time()
-        self.ui_update_interval = 0.1  # 100ms마다 UI 업데이트
-
-        # pythoncom 메시지 처리를 위한 타이머
-        self.message_timer = QTimer()
-        self.message_timer.timeout.connect(self._pump_messages)
-        self.message_timer.setInterval(10)  # 10ms마다 메시지 처리
-
-        # 현재시간 업데이트 타이머
-        self.time_timer = QTimer()
-        self.time_timer.timeout.connect(self._update_current_time)
-        self.time_timer.setInterval(1000)  # 1초마다 현재시간 업데이트
-
-        # 버튼 연결
-        self.start_button.clicked.connect(self.start_monitoring)
-        self.stop_button.clicked.connect(self.stop_monitoring)
-
-        # 테이블 설정
-        self.setup_table()
-
-        # Kiwoom API 연결
-        self.connect_kiwoom()
-
-        # Telegram Bot 연결
-        self.connect_telegram()
-
-    def setup_table(self):
-        """테이블 초기 설정"""
-        header = self.alert_table.horizontalHeader()
-        header.setSectionResizeMode(0, QHeaderView.ResizeToContents)  # 시간
-        header.setSectionResizeMode(1, QHeaderView.ResizeToContents)  # 종목코드
-        header.setSectionResizeMode(2, QHeaderView.Stretch)  # 종목명
-        header.setSectionResizeMode(3, QHeaderView.ResizeToContents)  # 시가
-        header.setSectionResizeMode(4, QHeaderView.ResizeToContents)  # 고가
-        header.setSectionResizeMode(5, QHeaderView.ResizeToContents)  # 저가
-        header.setSectionResizeMode(6, QHeaderView.ResizeToContents)  # 종가
-        header.setSectionResizeMode(7, QHeaderView.ResizeToContents)  # 거래대금
-        header.setSectionResizeMode(8, QHeaderView.ResizeToContents)  # 이전평균
-        header.setSectionResizeMode(9, QHeaderView.ResizeToContents)  # 배수
-
-    def connect_kiwoom(self):
-        """Kiwoom API 연결"""
-        try:
-            self.log("Kiwoom API 연결 중...")
-            self.kiwoom = Kiwoom()
-            self.kiwoom.CommConnect(block=True)
-
-            self.account = self.kiwoom.GetLoginInfo("ACCNO")[0]
-
-            if self.account:
-                self.account_info.setText(self.account)
-                self.connection_status.setText("연결됨")
-                self.connection_status.setStyleSheet(
-                    "color: green; font-weight: bold;")
-                self.log(f"✅️ Kiwoom API 연결 성공 (계좌: {self.account})")
-
-                self.load_conditions()
-            else:
-                raise Exception("계좌번호를 가져올 수 없습니다.")
-
-        except Exception as e:
-            self.log(f"Kiwoom API 연결 실패: {str(e)}")
-            self.connection_status.setText("연결 실패")
-            self.connection_status.setStyleSheet(
-                "color: red; font-weight: bold;")
-
-    def load_conditions(self):
-        """조건식 리스트 로드"""
-        try:
-            self.log("조건식 리스트 로드 중...")
-            self.kiwoom.GetConditionLoad()
-            self.conditions = self.kiwoom.GetConditionNameList()
-
-            if self.conditions:
-                self.log(f"✅️ 조건식 {len(self.conditions)}개 로드 완료")
-                self.condition_combobox.clear()
-                for idx, (condition_index, condition_name) in enumerate(self.conditions):
-                    self.condition_combobox.addItem(f"{idx}: {condition_name}")
-                # 기본값을 1번 인덱스로 설정
-                if len(self.conditions) > 1:
-                    self.condition_combobox.setCurrentIndex(1)
-            else:
-                self.condition_combobox.addItem("조건식 없음")
-
-        except Exception as e:
-            self.log(f"조건식 로드 실패: {str(e)}")
-            self.condition_combobox.addItem("조건식 로드 실패")
-
-    def connect_telegram(self):
-        """텔레그램 봇 연결"""
-        token = os.getenv("TELEBOT_TOKEN")
-        chat_id = os.getenv("TELEGRAM_CHAT_ID")
-
-        if not token:
-            self.log("⚠️  Telegram Bot: TELEBOT_TOKEN이 설정되지 않았습니다.")
-            return
-
-        if not chat_id:
-            self.log("⚠️  Telegram Bot: TELEGRAM_CHAT_ID가 설정되지 않았습니다.")
-            return
-
-        # TelegramBot 인스턴스 생성 및 연결
-        self.telegram_bot = TelegramBot(token, chat_id, logger=self.log)
-        self.telegram_bot.connect()
+        self.program_top_codes: List[str] = []
+        self.is_requesting = False  # TR 동시 조회 방지
+        self.is_running = False
+        self.program_refresh_timer: Optional[threading.Timer] = None
+        self.request_queue = queue.Queue()  # 스레드 간 요청 큐
 
     def log(self, message: str):
-        """로그 출력"""
-        timestamp = datetime.now().strftime('%H:%M:%S')
-        self.log_browser.append(f"[{timestamp}] {message}")
-        QApplication.processEvents()
+        """콘솔에 로그 출력"""
+        print(f"[{datetime.now().strftime('%H:%M:%S')}] {message}")
 
-    def get_parameters(self) -> Dict:
-        """GUI에서 파라미터 읽기"""
-        return {
-            'condition_index': self.condition_combobox.currentIndex(),
-            'min_amount': self.min_amount.value(),
-            'lookback_candles': self.lookback_candles.value(),
-            'amount_multiplier': self.amount_multiplier.value(),
-            'body_tail_ratio': self.body_tail_ratio.value(),
-            'program_count': self.program_count.value()
-        }
+    def _connect_kiwoom(self):
+        """Kiwoom API 연결 및 초기화"""
+        self.log("🔲 Kiwoom API 연결 시도...")
+        self.kiwoom = Kiwoom()
+        self.kiwoom.CommConnect(block=True)
+        account = self.kiwoom.GetLoginInfo("ACCNO")[0]
+        self.log(f"✅ Kiwoom API 연결 성공 (계좌: {account})")
 
-    def start_monitoring(self):
-        """실시간 모니터링 시작"""
-        if not self.kiwoom:
-            self.log("Kiwoom API가 연결되지 않았습니다.")
+        self.log("🔲 조건식 리스트 로드...")
+        self.kiwoom.GetConditionLoad()
+        self.conditions = self.kiwoom.GetConditionNameList()
+        if not self.conditions:
+            raise Exception("조건식을 찾을 수 없습니다.")
+        self.log(f"✅ 조건식 {len(self.conditions)}개 로드 완료")
+
+    def _connect_telegram(self):
+        """텔레그램 봇 연결"""
+        if not self.config.ENABLE_TELEGRAM:
+            self.log("텔레그램 비활성화 상태입니다.")
             return
 
+        token = os.getenv("TELEBOT_TOKEN")
+        chat_id = os.getenv("TELEGRAM_CHAT_ID")
+        if not token or not chat_id:
+            self.log("⚠️ 텔레그램 설정(TELEBOT_TOKEN, TELEGRAM_CHAT_ID)이 필요합니다.")
+            return
+
+        self.telegram_bot = TelegramBot(token, chat_id, logger=self.log)
+        self.telegram_bot.connect()
+        self.log(f"✅ 텔레그램 연결 완료")
+
+    def start(self):
+        """실시간 모니터링 시작"""
         try:
+            self._connect_kiwoom()
+            self._connect_telegram()
+            self.is_running = True
+
             self.log("=" * 60)
             self.log("실시간 거래대금 급증 탐지 시작")
 
-            params = self.get_parameters()
-            condition_name = self.conditions[params['condition_index']][1]
-
-            self.log(f"설정: 조건검색[{condition_name}] "
-                     f"최소거래대금[{params['min_amount']}억원] "
-                     f"이전분봉[{params['lookback_candles']}개] "
-                     f"배수[{params['amount_multiplier']}배] "
-                     f"몸통/윗꼬리[{params['body_tail_ratio']}배] "
-                     f"프로그램 순매수 상위 [{params['program_count']}]위 이내")
-
-            # 조건 검색으로 종목 코드 리스트 불러오기
-            codes, _ = screen_by_custom_condition(
-                self.kiwoom, params['condition_index'])
+            # 1. 모니터링 대상 종목 선정
+            condition_index = self.config.CONDITION_INDEX
+            codes, _ = screen_by_custom_condition(self.kiwoom, condition_index)
             self.monitoring_codes = codes
             self.log(f"모니터링 대상 종목: {len(codes)}개")
 
-            # 실시간 데이터 저장소 초기화
+            # 2. 데이터 구조 초기화
             self.minute_data = {code: deque(
-                maxlen=params['lookback_candles']) for code in codes}
+                maxlen=self.config.LOOKBACK_CANDLES + 1) for code in codes}
             self.ongoing_candles = {}
             self.alerted = {}
+            self.last_check_time = {}
 
-            # 알림 테이블 초기화 (이전 알림 목록 삭제)
-            self.alert_table.setRowCount(0)
-
-            # SetRealReg로 실시간 조회 등록 (100개씩)
+            # 3. 실시간 시세 등록 (100개씩)
             for i in range(len(codes) // 100 + 1):
                 subset = codes[i*100:(i+1)*100]
                 reg_type = "0" if i == 0 else "1"
@@ -230,85 +213,169 @@ class MainWindow(QMainWindow):
                         "10;15;20",  # 10=현재가, 15=거래량, 20=체결시간
                         reg_type
                     )
+            self.log(f"{len(codes)}개 종목 실시간 데이터 수신 등록 완료")
 
-            self.log(f"{len(codes)}개 종목 실시간 등록 완료")
-
-            # 이벤트 핸들러 연결
+            # 4. 이벤트 핸들러 연결
             self.kiwoom.ocx.OnReceiveRealData.connect(
                 self._on_receive_real_data)
 
-            # UI 업데이트
-            self.monitoring_count.setText(f"{len(codes)}개")
-            self.start_button.setEnabled(False)
-            self.stop_button.setEnabled(True)
+            # 5. 타이머 및 초기 데이터 로드
+            if self.config.ENABLE_PROGRAM:
+                self._execute_refresh_program_codes()  # 시작 시 즉시 실행
+                # 주기적 실행을 위한 타이머 설정
+                self.program_refresh_timer = threading.Timer(
+                    self.config.PROGRAM_REFRESH_INTERVAL,
+                    self._schedule_refresh_program_codes
+                )
+                self.program_refresh_timer.start()
 
-            self.log("모니터링 시작됨")
-            self.log("=" * 60)
-
-            # 텔레그램 시작 메시지 전송
+            # 6. 텔레그램 시작 메시지 전송
             if self.telegram_bot:
-                self.telegram_bot.send_start_message(
-                    condition_name, len(codes), params)
+                message = self._get_conditions_text()
+                self.telegram_bot.send_start_message(message)
 
-            # 메시지 처리 타이머 시작
-            self.message_timer.start()
-
-            # 현재시간 타이머 시작
-            self.time_timer.start()
+            self.log("=" * 60)
+            self._run_loop()
 
         except Exception as e:
-            self.log(f"ERROR: 모니터링 시작 실패: {str(e)}")
+            self.log(f"❌ 시작 중 오류 발생: {e}")
+            traceback.print_exc()
 
-    def stop_monitoring(self):
+    def stop(self):
         """실시간 모니터링 중지"""
-        try:
-            # 타이머 중지
-            self.message_timer.stop()
-            self.time_timer.stop()
+        if not self.is_running:
+            return
+        self.log("모니터링 중지 시작...")
+        self.is_running = False
 
-            # 현재시간 리셋
-            self.current_time.setText("--:--:--")
+        if self.program_refresh_timer:
+            self.program_refresh_timer.cancel()
 
-            # 실시간 등록 해제
-            if self.kiwoom:
-                self.kiwoom.SetRealRemove('ALL', 'ALL')
+        if self.kiwoom:
+            self.kiwoom.SetRealRemove('ALL', 'ALL')
+            self.log("실시간 데이터 수신 해제")
 
-            self.start_button.setEnabled(True)
-            self.stop_button.setEnabled(False)
-            self.log("모니터링 중지됨")
-
+        if self.telegram_bot:
             self.telegram_bot.send_stop_message()
 
-        except Exception as e:
-            self.log(f"ERROR: 모니터링 중지 실패: {str(e)}")
+        self.log("✅ 모니터링이 중지되었습니다.")
 
-    def _pump_messages(self):
-        """pythoncom 메시지 처리 (QTimer에서 주기적으로 호출)"""
-        try:
+    def _run_loop(self):
+        """메인 이벤트 루프: COM 메시지 처리 및 요청 큐 확인"""
+        self.log("메인 루프 시작. (Ctrl+C로 종료)")
+        while self.is_running:
+            # 1. 요청 큐에서 작업 확인 및 실행
+            try:
+                request_type, payload = self.request_queue.get_nowait()
+                if request_type == "REFRESH_PROGRAM_CODES":
+                    self._execute_refresh_program_codes()
+                elif request_type == "CHECK_MA":
+                    self._execute_check_ma(payload)
+            except queue.Empty:
+                pass
+
+            # 2. COM 메시지 처리
             pythoncom.PumpWaitingMessages()
-        except Exception as e:
-            self.log(f"ERROR: 메시지 처리 오류: {str(e)}")
+            time.sleep(0.01)
 
-    def _update_current_time(self):
-        """현재시간 업데이트 (1초마다 호출)"""
-        current_time = datetime.now().strftime('%H:%M:%S')
-        self.current_time.setText(current_time)
+    def _get_conditions_text(self) -> str:
+        """텔레그램 메시지에 포함될 조건 텍스트 생성"""
+        c = self.config
+        condition_name = self.conditions[c.CONDITION_INDEX][1]
+        conditions_text = f"📋 *조건식:* {condition_name}\n"
+        conditions_text += f"📊 *모니터링 종목:* {len(self.monitoring_codes)}개\n\n"
+        conditions_text += "*알림 조건:*\n"
+
+        if c.ENABLE_MIN_AMOUNT:
+            conditions_text += f"• 최소 거래대금: {c.MIN_AMOUNT}억원\n"
+        if c.ENABLE_LOOKBACK:
+            conditions_text += f"• 이전 분봉 개수: {c.LOOKBACK_CANDLES}개\n"
+            conditions_text += f"• 급증 배수: {c.AMOUNT_MULTIPLIER}배\n"
+        if c.ENABLE_BODY_TAIL:
+            conditions_text += f"• 몸통/윗꼬리 비율: {c.BODY_TAIL_RATIO}배\n"
+        if c.ENABLE_PROGRAM:
+            conditions_text += f"• 프로그램 순매수 상위 [{c.PROGRAM_COUNT}]위 이내\n"
+        if c.ENABLE_MA_ALIGNMENT:
+            ma_periods_str = ' ≥ '.join(map(str, c.MA_PERIODS))
+            conditions_text += f"• {c.MA_TICK}분봉 이동평균선 정배열: {ma_periods_str}"
+        return conditions_text
+
+    def _get_alert_text(self, alert: AlertInfo) -> str:
+        """알림 메시지 텍스트 생성 (활성화된 필터 조건만 포함)"""
+        c = self.config
+
+        # 기본 정보
+        message = f"🔥 *{alert.name}({alert.code})*\n\n"
+        message += f"💰 *현재가*: {format_price(alert.candle.close)}원\n"
+        message += f"⏰ *시간*: {alert.time}\n\n"
+
+        # 활성화된 필터 조건에 따라 동적으로 추가
+        details = []
+
+        if c.ENABLE_LOOKBACK:
+            details.append(f"💥 *급증 거래대금*: {format_ratio(alert.ratio)[:-1]}배")
+            details.append(
+                f"📊 *거래대금*: {format_amount(alert.current_amount)} (이전평균: {format_amount(alert.avg_prev_amount)})")
+        elif c.ENABLE_MIN_AMOUNT:
+            details.append(f"📊 *거래대금*: {format_amount(alert.current_amount)}")
+
+        if c.ENABLE_PROGRAM and alert.program_rank > 0:
+            details.append(f"📈 *프로그램 순매수 순위*: {alert.program_rank}위")
+
+        if c.ENABLE_MA_ALIGNMENT:
+            ma_periods_str = ' > '.join(map(str, c.MA_PERIODS))
+            details.append(f"📈 *MA 정배열*: {ma_periods_str}")
+
+        message += '\n'.join(details)
+
+        return message
+
+    def _schedule_refresh_program_codes(self):
+        """(보조 스레드에서 실행) 메인 스레드에 프로그램 순매수 갱신을 요청"""
+        if not self.is_running:
+            return
+
+        # 메인 스레드가 처리하도록 큐에 요청 추가
+        self.request_queue.put(("REFRESH_PROGRAM_CODES", None))
+
+        # 다음 타이머 설정
+        if self.is_running:
+            self.program_refresh_timer = threading.Timer(
+                self.config.PROGRAM_REFRESH_INTERVAL,
+                self._schedule_refresh_program_codes
+            )
+            self.program_refresh_timer.start()
+
+    def _execute_refresh_program_codes(self):
+        """(메인 스레드에서 실행) 실제 프로그램 순매수 데이터를 조회하고 갱신"""
+        if self.is_requesting:
+            self.log("[프로그램 순매수] 다른 TR 조회 진행 중 - 이번 갱신 스킵")
+            return
+
+        try:
+            self.is_requesting = True
+            codes = screen_by_program(self.kiwoom, self.config.PROGRAM_COUNT)
+            if codes:
+                self.program_top_codes = codes
+                self.log(f"[프로그램 순매수] 상위 {len(codes)}개 종목 갱신 완료")
+            else:
+                self.log("[프로그램 순매수] 조회 실패 - 이전 데이터 유지")
+        finally:
+            self.is_requesting = False
 
     def _on_receive_real_data(self, sCode: str, sRealType: str, sRealData: str):
-        """
-        실시간 데이터 수신 핸들러
-        성능 최적화를 위해 최소한의 로직만 포함
-        """
-        try:
-            if sRealType != "주식체결":
-                return
+        """실시간 데이터 수신 핸들러"""
+        if sRealType != "주식체결":
+            return
 
+        try:
             # 데이터 추출
             price = safe_int(self.kiwoom.GetCommRealData(
                 sCode, 10), use_abs=True)
             volume = safe_int(self.kiwoom.GetCommRealData(
                 sCode, 15), use_abs=True)
-            current_minute = datetime.now().strftime("%H:%M")
+            exec_time_str = self.kiwoom.GetCommRealData(sCode, 20)  # "HHMMSS"
+            current_minute = exec_time_str[:4]  # "HHMM"
 
             # 데이터 유효성 체크
             if price <= 0 or volume <= 0:
@@ -318,17 +385,14 @@ class MainWindow(QMainWindow):
             self._update_candle_data(sCode, current_minute, price, volume)
 
             # 알림 조건 체크
-            self._check_and_alert(sCode, current_minute)
-
-            # UI 업데이트 (throttling)
-            self._flush_pending_alerts()
+            self._check_and_alert(sCode, current_minute, exec_time_str)
 
         except Exception as e:
-            # 성능을 위해 로그 출력 최소화
-            pass
+            self.log(f"❌ _on_receive_real_data 오류 ({sCode}): {e}")
+            traceback.print_exc()
 
     def _update_candle_data(self, code: str, current_minute: str, price: int, volume: int):
-        """분봉 데이터 업데이트 (mutable 상태 관리)"""
+        """분봉 데이터 업데이트"""
         if code not in self.ongoing_candles:
             self.ongoing_candles[code] = {}
 
@@ -363,139 +427,126 @@ class MainWindow(QMainWindow):
             d["close"] = price
             d["volume"] += volume
 
-    def _check_and_alert(self, code: str, current_minute: str):
-        """알림 조건 체크 및 알림 생성"""
-        # 이미 이번 분에 알림을 보냈으면 스킵
+    def _check_and_alert(self, code: str, current_minute: str, exec_time_str: str):
+        """알림 조건 체크 및 발송 요청"""
+
+        # 1. 중복 알림, 체크 방지
         if code in self.alerted and self.alerted[code] == current_minute:
             return
 
-        # 현재 진행 중인 분봉 데이터 가져오기
+        now = time.time()
+        if now - self.last_check_time.get(code, 0) < self.config.THROTTLE_SECONDS:
+            return
+        self.last_check_time[code] = now
+
+        # 2. 현재 분봉 데이터 가져오기
         if code not in self.ongoing_candles or current_minute not in self.ongoing_candles[code]:
             return
+        candle = CandleData(**self.ongoing_candles[code][current_minute])
 
-        candle_dict = self.ongoing_candles[code][current_minute]
-        candle = CandleData(**candle_dict)
-
-        # 파라미터 가져오기
-        params = self.get_parameters()
-
-        # 알림 조건 체크
+        # 3. 1단계 필터링 (빠른 필터)
+        program_codes_snapshot = self.program_top_codes.copy()
         prev_candles = list(self.minute_data.get(code, []))
         result, data = should_alert(
-            candle,
-            prev_candles,
-            params['min_amount'],
-            params['lookback_candles'],
-            params['amount_multiplier'],
-            params['body_tail_ratio'],
-            self.kiwoom,
-            code,
-            params['program_count']
+            candle, prev_candles, code, program_codes_snapshot, self.config)
+
+        if not result:
+            return
+        self.log(f"✅ {code} - 1단계 필터 통과")
+
+        # 4. MA 필터링이 비활성화된 경우, 즉시 알림 실행
+        if not self.config.ENABLE_MA_ALIGNMENT:
+            self._execute_final_alert(
+                code, current_minute, candle, data, exec_time_str)
+            return
+
+        # 5. MA 필터링을 위해 큐에 작업 요청
+        payload = {
+            "code": code,
+            "candle": candle,
+            "data": data,
+            "current_minute": current_minute,
+            "exec_time_str": exec_time_str
+        }
+        self.request_queue.put(("CHECK_MA", payload))
+
+    def _execute_check_ma(self, payload: Dict):
+        """(메인 스레드에서 실행) MA 정배열을 체크하고 최종 알림 발송"""
+        code = payload['code']
+
+        if self.is_requesting:
+            self.log(f"[{code}] 다른 TR 조회 진행 중 - MA 체크 스킵")
+            return
+
+        try:
+            self.is_requesting = True
+            is_aligned = check_ma_alignment(
+                self.kiwoom, code, self.config.MA_TICK, self.config.MA_PERIODS
+            )
+            if not is_aligned:
+                return
+
+            self.log(f"✅ {code} - 2단계 MA 필터 통과")
+
+            # MA 필터 통과 시 최종 알림 실행
+            self._execute_final_alert(
+                code,
+                payload['current_minute'],
+                payload['candle'],
+                payload['data'],
+                payload['exec_time_str']
+            )
+        finally:
+            self.is_requesting = False
+
+    def _execute_final_alert(self, code: str, current_minute: str, candle: CandleData, data: Tuple, exec_time_str: str):
+        """(메인 스레드에서 실행) 최종 알림을 생성하고 발송"""
+        current_amount, avg_prev_amount, ratio, program_rank = data
+        # HH:MM:SS
+        time = f"{exec_time_str[:2]}:{exec_time_str[2:4]}:{exec_time_str[4:6]}"
+
+        # 종목명 조회
+        name = self.kiwoom.GetMasterCodeName(code)
+
+        alert = AlertInfo(
+            time=time,
+            code=code,
+            name=name,
+            candle=candle,
+            current_amount=current_amount,
+            avg_prev_amount=avg_prev_amount,
+            ratio=ratio,
+            program_rank=program_rank
         )
 
-        if result and data:
-            current_amount, avg_prev_amount, ratio, program_rank = data
+        # 알림 기록
+        self.alerted[code] = current_minute
 
-            # 알림 정보 생성
-            stock_name = self.kiwoom.GetMasterCodeName(code)
-            alert = AlertInfo(
-                time=datetime.now().strftime('%H:%M:%S'),
-                code=code,
-                name=stock_name,
-                candle=candle,
-                current_amount=current_amount,
-                avg_prev_amount=avg_prev_amount,
-                ratio=ratio,
-                program_rank=program_rank
-            )
+        # 로그 출력
+        message = self._get_alert_text(alert)
+        self.log(message)
 
-            # 버퍼에 추가
-            self.pending_alerts.append(alert)
-
-            # 알림 기록
-            self.alerted[code] = current_minute
-
-            # 로그 출력
-            self.log(f"🚨 거래대금 급증: {stock_name}({code}) "
-                     f"{format_amount(current_amount)} (이전 평균 {format_amount(avg_prev_amount)}, "
-                     f"{format_ratio(ratio)})")
-
-            # 텔레그램 메시지 전송
-            if self.telegram_bot:
-                self.telegram_bot.send_alert(alert)
-
-    def _flush_pending_alerts(self):
-        """보류 중인 알림을 UI에 반영 (throttling)"""
-        current_time = time.time()
-
-        if current_time - self.last_ui_update < self.ui_update_interval:
-            return
-
-        if not self.pending_alerts:
-            return
-
-        # 모든 보류 중인 알림 처리
-        for alert in self.pending_alerts:
-            self._add_alert_to_table(alert)
-
-        # 버퍼 클리어
-        self.pending_alerts.clear()
-        self.last_ui_update = current_time
-
-    def _add_alert_to_table(self, alert: AlertInfo):
-        """테이블에 알림 추가"""
-        # 메모리 관리: 최대 1000개까지만 유지
-        MAX_ROWS = 1000
-        if self.alert_table.rowCount() >= MAX_ROWS:
-            self.alert_table.removeRow(MAX_ROWS - 1)
-
-        row_position = 0
-        self.alert_table.insertRow(row_position)
-
-        # 시간
-        self.alert_table.setItem(row_position, 0, QTableWidgetItem(alert.time))
-
-        # 종목코드
-        self.alert_table.setItem(row_position, 1, QTableWidgetItem(alert.code))
-
-        # 종목명
-        self.alert_table.setItem(row_position, 2, QTableWidgetItem(alert.name))
-
-        # 시가, 고가, 저가, 종가
-        for idx, price in enumerate([alert.candle.open, alert.candle.high,
-                                     alert.candle.low, alert.candle.close]):
-            item = QTableWidgetItem(format_price(price))
-            item.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
-            self.alert_table.setItem(row_position, 3 + idx, item)
-
-        # 거래대금
-        amount_item = QTableWidgetItem(format_amount(alert.current_amount))
-        amount_item.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
-        self.alert_table.setItem(row_position, 7, amount_item)
-
-        # 이전평균
-        avg_item = QTableWidgetItem(format_amount(alert.avg_prev_amount))
-        avg_item.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
-        self.alert_table.setItem(row_position, 8, avg_item)
-
-        # 배수
-        ratio_item = QTableWidgetItem(format_ratio(alert.ratio))
-        ratio_item.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
-        ratio_item.setForeground(Qt.red)
-        self.alert_table.setItem(row_position, 9, ratio_item)
+        # 텔레그램 메시지 전송
+        if self.telegram_bot:
+            self.telegram_bot.send_alert(message)
 
 
 def main():
-    app = QApplication(sys.argv)
-    window = MainWindow()
-    window.show()
-    sys.exit(app.exec_())
+    """애플리케이션 진입점"""
+    config = Config()
+    bot = NBunBot(config)
+
+    try:
+        bot.start()
+    except KeyboardInterrupt:
+        print("\nCtrl+C 입력. 종료합니다.")
+    finally:
+        bot.stop()
 
 
 if __name__ == "__main__":
     try:
         main()
     except Exception as e:
-        print(f"\n❌ 오류 발생: {e}")
-        import traceback
+        print(f"\n❌ 예기치 않은 오류 발생: {e}")
         traceback.print_exc()
