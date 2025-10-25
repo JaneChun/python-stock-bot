@@ -2,7 +2,7 @@
 시장 데이터 조회 API
 """
 from datetime import datetime
-from .utils import safe_int, safe_float
+from .utils import safe_int, safe_float, apply_rate_limit
 
 
 def get_current_price(kiwoom, code):
@@ -17,11 +17,14 @@ def get_current_price(kiwoom, code):
         dict: 현재가 정보 (종목명, 현재가, 등락률 등)
     """
     try:
-        data = kiwoom.block_request(
-            "opt10001",
-            종목코드=code,
-            output="주식기본정보",
-            next=0
+        data = apply_rate_limit(
+            lambda: kiwoom.block_request(
+                "opt10001",
+                종목코드=code,
+                output="주식기본정보",
+                next=0
+            ),
+            delay=0.2
         )
 
         # DataFrame 처리
@@ -66,11 +69,14 @@ def get_stock_info(kiwoom, code):
         dict: 종목 정보
     """
     try:
-        data = kiwoom.block_request(
-            "opt10001",
-            종목코드=code,
-            output="주식기본정보",
-            next=0
+        data = apply_rate_limit(
+            lambda: kiwoom.block_request(
+                "opt10001",
+                종목코드=code,
+                output="주식기본정보",
+                next=0
+            ),
+            delay=0.2
         )
 
         # DataFrame 처리
@@ -130,15 +136,18 @@ def get_investor_data(kiwoom, code):
     """
     try:
         # 일자별 매매 정보 조회
-        data = kiwoom.block_request(
-            "opt10059",
-            일자=datetime.now().strftime('%Y%m%d'),
-            종목코드=code,
-            금액수량구분="1",  # 1:금액, 2:수량
-            매매구분="0",     # 0:순매수, 1:매수, 2:매도
-            단위구분="1000",  # 1:단주, 1000:천주
-            output="종목별투자자기관별",
-            next=0
+        data = apply_rate_limit(
+            lambda: kiwoom.block_request(
+                "opt10059",
+                일자=datetime.now().strftime('%Y%m%d'),
+                종목코드=code,
+                금액수량구분="1",  # 1:금액, 2:수량
+                매매구분="0",     # 0:순매수, 1:매수, 2:매도
+                단위구분="1000",  # 1:단주, 1000:천주
+                output="종목별투자자기관별",
+                next=0
+            ),
+            delay=0.2
         )
 
         # DataFrame 처리
@@ -190,13 +199,16 @@ def get_minute_data(kiwoom, code, tick=1, count=20):
         list: 분봉 데이터 리스트
     """
     try:
-        data = kiwoom.block_request(
-            "opt10080",
-            종목코드=code,
-            틱범위=tick,  # 1:1분, 3:3분, 5:5분, 10:10분, 15:15분, 30:30분, 45:45분, 60:60분
-            수정주가구분="1",
-            output="주식분봉차트조회",
-            next=0
+        data = apply_rate_limit(
+            lambda: kiwoom.block_request(
+                "opt10080",
+                종목코드=code,
+                틱범위=tick,  # 1:1분, 3:3분, 5:5분, 10:10분, 15:15분, 30:30분, 45:45분, 60:60분
+                수정주가구분="1",
+                output="주식분봉차트조회",
+                next=0
+            ),
+            delay=0.2
         )
 
         # DataFrame 처리
@@ -260,13 +272,16 @@ def get_daily_data(kiwoom, code, days=20):
         list: 일봉 데이터 리스트
     """
     try:
-        data = kiwoom.block_request(
-            "opt10081",
-            종목코드=code,
-            기준일자=datetime.now().strftime('%Y%m%d'),
-            수정주가구분="1",
-            output="주식일봉차트조회",
-            next=0
+        data = apply_rate_limit(
+            lambda: kiwoom.block_request(
+                "opt10081",
+                종목코드=code,
+                기준일자=datetime.now().strftime('%Y%m%d'),
+                수정주가구분="1",
+                output="주식일봉차트조회",
+                next=0
+            ),
+            delay=0.2
         )
 
         # DataFrame 처리

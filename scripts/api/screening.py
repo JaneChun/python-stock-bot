@@ -11,7 +11,7 @@ import pythoncom
 # Add project root to Python path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from .utils import safe_int  # noqa: E402
+from .utils import safe_int, apply_rate_limit  # noqa: E402
 
 
 def screen_by_custom_condition(kiwoom, index=0):
@@ -226,20 +226,18 @@ def screen_by_program(kiwoom, count):
                 next_value = 0 if page == 0 else 2
 
                 # OPT90003: 프로그램순매수상위50요청
-                df = kiwoom.block_request(
-                    "opt90003",
-                    매매상위구분="2",             # 1:순매도상위, 2:순매수상위
-                    금액수량구분="1",             # 1:금액, 2:수량
-                    시장구분=market_code,         # P00101:코스피, P10102:코스닥
-                    거래소구분="1",               # 1:KRX, 2:NXT, 3:통합
-                    output="프로그램순매수상위50",
-                    next=next_value
+                df = apply_rate_limit(
+                    lambda: kiwoom.block_request(
+                        "opt90003",
+                        매매상위구분="2",             # 1:순매도상위, 2:순매수상위
+                        금액수량구분="1",             # 1:금액, 2:수량
+                        시장구분=market_code,         # P00101:코스피, P10102:코스닥
+                        거래소구분="1",               # 1:KRX, 2:NXT, 3:통합
+                        output="프로그램순매수상위50",
+                        next=next_value
+                    ),
+                    delay=0.5  # 500ms 대기
                 )
-
-                # Rate limit (0.5초) + 실시간 데이터 수신 유지
-                for _ in range(50):
-                    pythoncom.PumpWaitingMessages()
-                    time.sleep(0.01)  # 10ms × 50 = 500ms
 
                 # DataFrame 처리
                 if df is None or df.empty:
