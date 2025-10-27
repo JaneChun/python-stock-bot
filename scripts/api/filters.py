@@ -8,7 +8,7 @@
 """
 from datetime import datetime
 from pykrx import stock
-from .market_data import get_daily_data, get_investor_data, get_stock_info, get_minute_data
+from .market_data import get_daily_data, get_investor_data, get_stock_info, get_minute_data, get_trader_buy_sell
 from .screening import screen_by_program
 from .utils import safe_int
 from .utils.rate_limiter import apply_rate_limit
@@ -329,6 +329,43 @@ def check_ma_alignment(kiwoom, code: str, tick: int = 3, periods: list = [5, 10,
     print(
         f"[MA정배열 체크] {code}: 정배열 통과 {dict(zip([f'MA{p}' for p in periods], [f'{ma:.2f}' for ma in moving_averages]))}")
     return True
+
+
+def check_trader_sell_dominance(kiwoom, code: str, trader_code: str) -> bool:
+    """
+    특정 증권사의 매도량이 매수량보다 많은지 확인
+
+    Args:
+        kiwoom: Kiwoom API 인스턴스
+        code: 종목코드
+        trader_name: 증권사코드 (예: '050': 키움증권)
+
+    Returns:
+        bool: 매도량 > 매수량이면 True, 아니면 False
+    """
+    try:
+        # 거래원 데이터 조회
+        data = get_trader_buy_sell(kiwoom, code)
+
+        if trader_code not in data:
+            print(f"[거래원 체크] {code}: 거래원 코드 '{trader_code}' 정보 없음")
+            return False
+
+        trader_info = data[trader_code]
+        trader_name = trader_info['name']
+        sell = trader_info['sell']
+        buy = trader_info['buy']
+
+        print(
+            f"[거래원 체크] {code} - {trader_name}: 매도 {sell if sell != 0 else '정보없음'}, 매수 {buy if buy != 0 else '정보없음'}")
+
+        return sell > buy
+
+    except Exception as e:
+        print(f"[오류] {code} 거래원 체크 실패: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return False
 
 
 # def filter_by_breakout(kiwoom, code, lookback_days=5, near_high_ratio=0.98):

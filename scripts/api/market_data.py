@@ -3,6 +3,8 @@
 """
 from datetime import datetime
 from .utils import safe_int, safe_float, apply_rate_limit
+import traceback
+from collections import defaultdict
 
 
 def get_current_price(kiwoom, code):
@@ -52,7 +54,6 @@ def get_current_price(kiwoom, code):
 
     except Exception as e:
         print(f"[오류] {code} 현재가 조회 실패: {str(e)}")
-        import traceback
         traceback.print_exc()
         return None
 
@@ -118,7 +119,6 @@ def get_stock_info(kiwoom, code):
 
     except Exception as e:
         print(f"[오류] {code} 정보 조회 실패: {str(e)}")
-        import traceback
         traceback.print_exc()
         return None
 
@@ -181,7 +181,85 @@ def get_investor_data(kiwoom, code):
 
     except Exception as e:
         print(f"[오류] {code} 투자자 정보 조회 실패: {str(e)}")
-        import traceback
+        traceback.print_exc()
+        return None
+
+
+def get_trader_buy_sell(kiwoom, code):
+    """
+    당일 주요 거래원 정보 조회
+
+    Args:
+        kiwoom: Kiwoom API 인스턴스
+        code: 종목코드
+
+    Returns:
+        dict: 거래원 코드를 키로 하는 딕셔너리
+              예: {'050': {'name': '키움증권', 'sell': 1000, 'buy': 500}, ...}
+              조회 실패시 None 반환
+    """
+    try:
+        data = apply_rate_limit(
+            lambda: kiwoom.block_request(
+                "opt10040",
+                종목코드=code,
+                output="당일주요거래원싱글",
+                next=0
+            ),
+            delay=0.2
+        )
+
+        if data is None or data.empty:
+            return None
+
+        traders = defaultdict(lambda: {'name': '', 'sell': 0, 'buy': 0})
+
+        # 매도 거래원
+        sell_code_cols = [
+            col for col in data.columns if col.startswith('매도거래원코드')]
+
+        for code_col in sell_code_cols:
+            # 거래원 코드 추출
+            # 매도거래원코드1, 매도거래원코드2, ...
+            trader_code = str(data[code_col].iloc[0]).strip()
+            if not trader_code or trader_code == '' or trader_code == 'nan':
+                continue
+
+            # 거래원 코드에 대응하는 거래원명 찾기
+            name_col = code_col.replace('코드', '')  # 매도거래원1, 매도거래원2, ...
+            trader_name = data[name_col].iloc[0].strip()
+
+            # 대응하는 수량 찾기
+            # 매도거래원수량1, 매도거래원수량2, ...
+            volume_col = code_col.replace('코드', '수량')
+            sell_volume = safe_int(data[volume_col].iloc[0], use_abs=True)
+
+            # 딕셔너리에 추가/업데이트
+            traders[trader_code]['name'] = trader_name
+            traders[trader_code]['sell'] = sell_volume
+
+        # 매수 거래원
+        buy_code_cols = [
+            col for col in data.columns if col.startswith('매수거래원코드')]
+
+        for code_col in buy_code_cols:
+            trader_code = str(data[code_col].iloc[0]).strip()
+            if not trader_code or trader_code == '' or trader_code == 'nan':
+                continue
+
+            name_col = code_col.replace('코드', '')
+            trader_name = data[name_col].iloc[0].strip()
+
+            volume_col = code_col.replace('코드', '수량')
+            buy_volume = safe_int(data[volume_col].iloc[0], use_abs=True)
+
+            traders[trader_code]['name'] = trader_name
+            traders[trader_code]['buy'] = buy_volume
+
+        return traders
+
+    except Exception as e:
+        print(f"[오류] {code} 현재 거래원 정보 조회 실패: {str(e)}")
         traceback.print_exc()
         return None
 
@@ -253,7 +331,6 @@ def get_minute_data(kiwoom, code, tick=1, count=20):
 
     except Exception as e:
         print(f"[오류] {code} {tick}분봉 데이터 조회 실패: {str(e)}")
-        import traceback
         traceback.print_exc()
 
     return []
@@ -329,7 +406,6 @@ def get_daily_data(kiwoom, code, days=20):
 
     except Exception as e:
         print(f"[오류] {code} 일봉 데이터 조회 실패: {str(e)}")
-        import traceback
         traceback.print_exc()
 
     return []
