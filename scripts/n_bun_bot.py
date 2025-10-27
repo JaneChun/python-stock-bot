@@ -28,7 +28,7 @@ from scripts.api.candle_analysis import (  # noqa: E402
     check_body_tail_ratio,
     calculate_prev_avg_amount
 )
-from scripts.api.filters import check_ma_alignment  # noqa: E402
+from scripts.api.filters import check_ma_alignment, check_trader_sell_dominance  # noqa: E402
 from scripts.api.utils.formatters import format_price, format_amount, format_ratio  # noqa: E402
 from scripts.api.telegram_bot import TelegramBot  # noqa: E402
 
@@ -50,6 +50,7 @@ class Config:
     PROGRAM_COUNT = 30  # 프로그램 순매수 상위 N개
     MA_TICK = 3  # 이동평균선 기준 분봉
     MA_PERIODS = [20, 40, 60]  # 이동평균선 기간 (짧은 순서)
+    TRADER_CODE = "050"  # 거래원 설정 (키움증권=050)
 
     # 필터 활성화 여부
     ENABLE_MIN_AMOUNT = True
@@ -57,6 +58,7 @@ class Config:
     ENABLE_BODY_TAIL = True
     ENABLE_PROGRAM = True
     ENABLE_MA_ALIGNMENT = True
+    ENABLE_TRADER_SELL = True  # 거래원 매도 우위 체크
     ENABLE_TELEGRAM = True
 
     # 시스템 설정
@@ -269,8 +271,8 @@ class NBunBot:
                 request_type, payload = self.request_queue.get_nowait()
                 if request_type == "REFRESH_PROGRAM_CODES":
                     self._execute_refresh_program_codes()
-                elif request_type == "CHECK_MA":
-                    self._execute_check_ma(payload)
+                elif request_type == "CHECK_TR_FILTERS":
+                    self._execute_tr_filters(payload)
             except queue.Empty:
                 pass
 
@@ -297,7 +299,9 @@ class NBunBot:
             conditions_text += f"• 프로그램 순매수 상위 [{c.PROGRAM_COUNT}]위 이내\n"
         if c.ENABLE_MA_ALIGNMENT:
             ma_periods_str = ' ≥ '.join(map(str, c.MA_PERIODS))
-            conditions_text += f"• {c.MA_TICK}분봉 이동평균선 정배열: {ma_periods_str}"
+            conditions_text += f"• {c.MA_TICK}분봉 이동평균선 정배열: {ma_periods_str}\n"
+        if c.ENABLE_TRADER_SELL:
+            conditions_text += f"• 거래원 매도 우위: 키움증권({c.TRADER_CODE})"
         return conditions_text
 
     def _get_alert_text(self, alert: AlertInfo) -> str:
@@ -305,7 +309,7 @@ class NBunBot:
         c = self.config
 
         # 기본 정보
-        message = f"🔥 *{alert.name}({alert.code})*\n\n"
+        message = f"🚀 *{alert.name}({alert.code})*\n\n"
         message += f"💰 *현재가*: {format_price(alert.candle.close)}원\n"
         message += f"⏰ *시간*: {alert.time}\n\n"
 
@@ -320,11 +324,14 @@ class NBunBot:
             details.append(f"📊 *거래대금*: {format_amount(alert.current_amount)}")
 
         if c.ENABLE_PROGRAM and alert.program_rank > 0:
-            details.append(f"📈 *프로그램 순매수 순위*: {alert.program_rank}위")
+            details.append(f"🤖 *프로그램 순매수 순위*: {alert.program_rank}위")
 
         if c.ENABLE_MA_ALIGNMENT:
-            ma_periods_str = ' > '.join(map(str, c.MA_PERIODS))
+            ma_periods_str = ' ≥ '.join(map(str, c.MA_PERIODS))
             details.append(f"📈 *MA 정배열*: {ma_periods_str}")
+
+        if c.ENABLE_TRADER_SELL:
+            details.append(f"🔹 *거래원 매도 우위*: 키움증권({c.TRADER_CODE})")
 
         message += '\n'.join(details)
 
@@ -454,13 +461,14 @@ class NBunBot:
             return
         self.log(f"✅ {code} - 1단계 필터 통과")
 
-        # 4. MA 필터링이 비활성화된 경우, 즉시 알림 실행
-        if not self.config.ENABLE_MA_ALIGNMENT:
+        # 4. TR 필터 필요 여부 확인
+        needs_tr_filters = self.config.ENABLE_MA_ALIGNMENT or self.config.ENABLE_TRADER_SELL
+        if not needs_tr_filters:
             self._execute_final_alert(
                 code, current_minute, candle, data, exec_time_str)
             return
 
-        # 5. MA 필터링을 위해 큐에 작업 요청
+        # 5. TR 필터링을 위해 큐에 작업 요청
         payload = {
             "code": code,
             "candle": candle,
@@ -468,27 +476,38 @@ class NBunBot:
             "current_minute": current_minute,
             "exec_time_str": exec_time_str
         }
-        self.request_queue.put(("CHECK_MA", payload))
+        self.request_queue.put(("CHECK_TR_FILTERS", payload))
 
-    def _execute_check_ma(self, payload: Dict):
-        """(메인 스레드에서 실행) MA 정배열을 체크하고 최종 알림 발송"""
+    def _execute_tr_filters(self, payload: Dict):
+        """(메인 스레드에서 실행) TR 조회가 필요한 필터들을 체크하고 최종 알림 발송"""
         code = payload['code']
 
         if self.is_requesting:
-            self.log(f"[{code}] 다른 TR 조회 진행 중 - MA 체크 스킵")
+            self.log(f"[{code}] 다른 TR 조회 진행 중 - TR 필터 스킵")
             return
 
         try:
             self.is_requesting = True
-            is_aligned = check_ma_alignment(
-                self.kiwoom, code, self.config.MA_TICK, self.config.MA_PERIODS
-            )
-            if not is_aligned:
-                return
 
-            self.log(f"✅ {code} - 2단계 MA 필터 통과")
+            # MA 정배열 체크
+            if self.config.ENABLE_MA_ALIGNMENT:
+                is_aligned = check_ma_alignment(
+                    self.kiwoom, code, self.config.MA_TICK, self.config.MA_PERIODS
+                )
+                if not is_aligned:
+                    return
+                self.log(f"✅ {code} - MA 정배열 필터 통과")
 
-            # MA 필터 통과 시 최종 알림 실행
+            # 거래원 매도 우위 체크
+            if self.config.ENABLE_TRADER_SELL:
+                is_sell_dominant = check_trader_sell_dominance(
+                    self.kiwoom, code, self.config.TRADER_CODE
+                )
+                if not is_sell_dominant:
+                    return
+                self.log(f"✅ {code} - 거래원 매도 우위 필터 통과")
+
+            # 모든 필터 통과 시 최종 알림 실행
             self._execute_final_alert(
                 code,
                 payload['current_minute'],
